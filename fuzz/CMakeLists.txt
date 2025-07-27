@@ -29,8 +29,8 @@ add_subdirectory(
 )
 
 enable_testing()
-
 include(GoogleTest)
+fuzztest_setup_fuzzing_flags()
 
 add_executable(
   fuzz_test
