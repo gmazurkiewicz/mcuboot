@@ -1,0 +1,13 @@
+{
+    "configurations": [
+        {
+            "name": "fuzz",
+            "compilerPath": "/usr/bin/clang++-19",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-clang-x64",
+            "compileCommands": "${workspaceFolder}/fuzz/build/compile_commands.json"
+        }
+    ],
+    "version": 4
+}
