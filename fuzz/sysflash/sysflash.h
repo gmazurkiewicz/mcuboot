@@ -7,8 +7,6 @@
 #ifndef __SYSFLASH_H__
 #define __SYSFLASH_H__
 
-// #include <devicetree.h>
-
 #define FLASH_AREA_ID(x) FLASH_AREA_ID_##x
 
 #define FLASH_AREA_ID_image_0 1

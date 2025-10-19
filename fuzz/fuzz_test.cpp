@@ -1,11 +1,11 @@
 #include "fuzztest/fuzztest.h"
 #include "gtest/gtest.h"
+#include "bootutil/bootutil.h"
 
-TEST(MyTestSuite, OnePlustTwoIsTwoPlusOne) {
-  EXPECT_EQ(1 + 2, 2 + 1);
+void InvokeBootGo()
+{
+    struct boot_rsp *rsp;
+    int res;
+    res = boot_go(rsp);
 }
-
-void IntegerAdditionCommutes(int a, int b) {
-  EXPECT_EQ(a + b, b + a);
-}
-FUZZ_TEST(MyTestSuite, IntegerAdditionCommutes);
+FUZZ_TEST(McuBootSuite, InvokeBootGo);

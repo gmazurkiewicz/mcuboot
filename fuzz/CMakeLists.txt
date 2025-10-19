@@ -35,7 +35,11 @@ fuzztest_setup_fuzzing_flags()
 add_executable(
   fuzz_test
   fuzz_test.cpp
+  storage/flash_map.c
+  keys.c
 )
+
+target_include_directories(fuzz_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(fuzz_test PRIVATE bootutil)
 target_link_libraries(fuzz_test PRIVATE mbedtls)

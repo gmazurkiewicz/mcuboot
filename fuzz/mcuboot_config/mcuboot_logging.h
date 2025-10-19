@@ -42,7 +42,7 @@
 #define MCUBOOT_LOG_MODULE_DECLARE(domain)	/* ignore */
 #define MCUBOOT_LOG_MODULE_REGISTER(domain)	/* ignore */
 
-int sim_log_enabled(int level);
+#define sim_log_enabled(level) (1)
 
 #if MCUBOOT_LOG_LEVEL >= MCUBOOT_LOG_LEVEL_ERROR
 #define MCUBOOT_LOG_ERR(_fmt, ...)                                      \
