@@ -1,2 +1,29 @@
 docker build --build-arg USERNAME=$(whoami) --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t fwbuild .
 docker run -it --rm -v ./:/workspace fwbuild bash -c "cd fuzz && ./run.sh"
+
+
+
+  207  python3 -m venv venv
+  208  . venv/bin/activate
+  209  cd ..
+  210  pip install -r scripts/requirements.txt 
+  211  ./scripts/imgtool.py keygen -k root-rsa-2048.pem -t rsa-2048
+  212  ./scripts/imgtool.py getpub -k root-rsa-2048.pem 
+  213  ./run.sh 
+  214  cd fuzz/
+  215  ./run.sh 
+  216  ../scripts/imgtool.py sign -k ../root-rsa-2048.pem asd asd.out
+  217  ../scripts/imgtool.py sign -k../root-rsa-2048.pem asd asd.out
+  218  ../scripts/imgtool.py sign -v
+  219  ../scripts/imgtool.py -v
+  220  ../scripts/imgtool.py sign -v 4  -k ../root-rsa-2048.pem asd asd.out
+  221  ../scripts/imgtool.py sign -h 0  -v 4  -k ../root-rsa-2048.pem asd asd.out
+  222  ../scripts/imgtool.py sign -h 0  -v 4.4.6 -k ../root-rsa-2048.pem asd asd.out
+  223  ../scripts/imgtool.py sign -v 4.4.6 -k ../root-rsa-2048.pem asd asd.out
+  224  ../scripts/imgtool.py sign -h -H  -v 4.4.6 -k ../root-rsa-2048.pem asd asd.out
+  225  ../scripts/imgtool.py sign -H 64 -v 4.4.6 -k ../root-rsa-2048.pem asd asd.out
+  226  ../scripts/imgtool.py sign -S 131072 -H 64 -v 4.4.6 -k ../root-rsa-2048.pem asd asd.out
+  227  sudo dd if=/dev/urandom of=img.in
+  228  sudo dd if=/dev/urandom of=img.in bs=128 count=1
+  229  ../scripts/imgtool.py sign -S 131072 -H 64 -v 4.4.6 -k ../root-rsa-2048.pem img.in img.out
+  230  
