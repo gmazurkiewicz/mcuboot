@@ -18,16 +18,17 @@
 #include <stddef.h>
 #include <string.h>
 #include "flash_map.h"
+#include <stdio.h>
 
 /* Parameters of the simulated flash */
-#define DEVICE_FLASH_SIZE   (3 * 128 * 1024) /* 256 KB */
+#define DEVICE_FLASH_SIZE   (3 * 128 * 1024) /* 3 * 128 KB */
 #define SECTOR_SIZE         4096             /* 4 KB */
 #define ERASED_VAL          0xFF
 
 /* Global memory simulating flash */
 static uint8_t flash_mem[DEVICE_FLASH_SIZE];
 
-/* Simple flash area map (two image slots). fa_id must be unique and start from 1. */
+/* Simple flash area map (three image slots). fa_id must be unique and start from 1. */
 static struct flash_area areas[] = {
     /* fa_id, fa_device_id, pad16, fa_off, fa_size */
     { 1, 0, 0, 0x00000, 128 * 1024 }, /* slot 0: 128KB starting at offset 0 */
@@ -157,12 +158,6 @@ int flash_area_get_sector(const struct flash_area *fa, uint32_t off, struct flas
     return 0;
 }
 
-int flash_area_to_sectors(int idx, int *cnt, struct flash_area *ret)
-{
-    (void)idx; (void)cnt; (void)ret;
-    /* Deprecated function, not implemented */
-    return -1;
-}
 
 /* Simple mapping from image slots to area ids.
  */
@@ -200,180 +195,3 @@ uint8_t *flash_sim_get_mem(void)
 {
     return flash_mem;
 }
-
-
-
-#if 0
-
-#include "flash_map.h"
-#include <string.h>
-#include <stdio.h>
-
-
-
-static struct flash_area g_fa;
-static uint8_t flash_data_a[10 * 1024 * 1024];
-static uint8_t flash_data_b[10 * 1024 * 1024];
-static uint8_t flash_data_c[10 * 1024 * 1024];
-
-static uint8_t *flash_data = flash_data_a;
-
-// int
-// flash_device_base(uint8_t fd_id, uintptr_t *ret)
-// {
-//     printf("flash_device_base %d\n", fd_id);
-//     *ret = (uintptr_t)flash_data_a;
-//     return 0;
-// }
-
-
-int
-flash_area_open(uint8_t id, const struct flash_area ** fa)
-{
-    printf("flash_area_open %d\n", id);
-    g_fa.fa_id = id;
-    if (id == 1) {
-        flash_data = flash_data_a;
-    } else if (id == 2) {
-        flash_data = flash_data_b;
-    } else if (id == 3) {
-        flash_data = flash_data_c;
-    } else {
-        printf("flash_area_open: invalid id\n");
-        return -1;
-    }
-    g_fa.fa_device_id = 0;
-    g_fa.pad16 = 0;
-    g_fa.fa_off = 0;
-    g_fa.fa_size = 10 * 1024 * 1024;
-    *fa = &g_fa;
-    return 0;
-}
-
-void
-flash_area_close(const struct flash_area *fa)
-{
-    return;
-}
-
-
-int
-flash_area_read(const struct flash_area *fa, uint32_t off, void *dst, uint32_t len)
-{
-    if (off + len > fa->fa_size) {
-        return -1;
-    }
-    memcpy(dst, &flash_data[fa->fa_off + off], len);
-    return 0;
-}
-
-int
-flash_area_write(const struct flash_area *fa, uint32_t off, const void *src, uint32_t len)
-{
-    if (off + len > g_fa.fa_size) {
-        return -1;
-    }
-    memcpy(&flash_data[g_fa.fa_off + off], src, len);
-    return 0;
-}
-
-int
-flash_area_erase(const struct flash_area *fa, uint32_t off, uint32_t len)
-{
-    if (off + len > g_fa.fa_size) {
-        return -1;
-    }
-    memset(&flash_data[g_fa.fa_off + off], 0xff, len);
-    return 0;
-}
-
-uint32_t flash_area_align(const struct flash_area *fa)
-{
-    return 1;
-}
-
-uint8_t
-flash_area_erased_val(const struct flash_area *fa)
-{
-    return 0xff;
-}
-
-int
-flash_area_get_sectors(int fa_id, uint32_t *count, struct flash_sector *sectors)
-{
-    if (fa_id != g_fa.fa_id) {
-        return -1;
-    }
-    if (*count < 1) {
-        return -1;
-    }
-    sectors[0].fs_off = 0;
-    sectors[0].fs_size = g_fa.fa_size;
-    *count = 1;
-    return 0;
-}
-
-int
-flash_area_sector_from_off(uint32_t off, struct flash_sector *sector)
-{
-    if (off >= g_fa.fa_size) {
-        return -1;
-    }
-    sector->fs_off = 0;
-    sector->fs_size = g_fa.fa_size;
-    return 0;
-}
-
-int
-flash_area_get_sector(const struct flash_area *fa, uint32_t off, struct flash_sector *sector)
-{
-    if (fa->fa_id != g_fa.fa_id) {
-        return -1;
-    }
-    if (off >= g_fa.fa_size) {
-        return -1;
-    }
-    sector->fs_off = 0;
-    sector->fs_size = g_fa.fa_size;
-    return 0;
-}
-
-int
-flash_area_to_sectors(int idx, int *cnt, struct flash_area *ret)
-{
-    if (idx != 0) {
-        return -1;
-    }
-    if (*cnt < 1) {
-        return -1;
-    }
-    memcpy(ret, &g_fa, sizeof(g_fa));
-    *cnt = 1;
-    return 0;
-}
-
-int flash_area_id_from_image_slot(int slot)
-{
-    if (slot != 0 && slot != 1) {
-        return -1;
-    }
-    return slot == 0 ? 1 : 2;
-}
-
-int flash_area_id_from_multi_image_slot(int image_index, int slot)
-{
-    if (image_index != 0 || (slot != 0 && slot != 1)) {
-        return -1;
-    }
-    return slot == 0 ? 1 : 2;
-}
-
-int flash_area_id_to_multi_image_slot(int image_index, int area_id)
-{
-    if (image_index != 0 || (area_id != 1 && area_id != 2)) {
-        return -1;
-    }
-    return area_id == 1 ? 0 : 1;
-}
-
-#endif

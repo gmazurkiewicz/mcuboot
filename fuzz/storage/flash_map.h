@@ -153,16 +153,12 @@ int flash_area_sector_from_off(uint32_t off, struct flash_sector *sector);
 int flash_area_get_sector(const struct flash_area *fa, uint32_t off,
   struct flash_sector *sector);
 
-/*
- * Similar to flash_area_get_sectors(), but return the values in an
- * array of struct flash_area instead.
- */
-// __attribute__((deprecated))
-int flash_area_to_sectors(int idx, int *cnt, struct flash_area *ret);
-
 int flash_area_id_from_image_slot(int slot);
 int flash_area_id_from_multi_image_slot(int image_index, int slot);
 int flash_area_id_to_multi_image_slot(int image_index, int area_id);
+
+void flash_sim_init(void);
+uint8_t *flash_sim_get_mem(void);
 
 #ifdef __cplusplus
 }
