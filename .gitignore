@@ -28,3 +28,6 @@ rusty-tags.*
 
 # The target directory from Rust development
 /target/
+
+# any venv folder
+**/venv/**/*
