@@ -45,9 +45,9 @@ void InvokeBootGo()
 {
     flash_sim_init();
     memcpy(flash_sim_get_mem(), img_out, sizeof(img_out));
-    struct boot_rsp *rsp;
+    struct boot_rsp rsp = {};
     int res;
-    res = boot_go(rsp);
+    res = boot_go(&rsp);
     ASSERT_EQ(res, 0);
 }
 FUZZ_TEST(McuBootSuite, InvokeBootGo);
