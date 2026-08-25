@@ -47,11 +47,20 @@ add_subdirectory(
 target_include_directories(bootutil PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(bootutil PRIVATE mbedtls)
 
-add_subdirectory(
-  ${CMAKE_CURRENT_SOURCE_DIR}/../ext/fuzztest
-  ${CMAKE_CURRENT_BINARY_DIR}/fuzztest
-  EXCLUDE_FROM_ALL
+# Fetched instead of a git submodule so the pinned commit lives in this
+# CMakeLists.txt. NOTE: EXCLUDE_FROM_ALL on FetchContent_Declare needs CMake
+# 3.28+ (we're on 3.25.1 here), so it's omitted. NOTE: FUZZTEST_FUZZING_MODE
+# is set without FORCE so an explicit -DFUZZTEST_FUZZING_MODE=on/off (as
+# run.sh/run_ubsan.sh pass) still takes precedence; ON here is just the
+# default when neither script's flag is given.
+include(FetchContent)
+set(FUZZTEST_VERSION "20fad20ee3f393c836e0015523aae0bff8ce9693")
+FetchContent_Declare(fuzztest
+  GIT_REPOSITORY    https://github.com/google/fuzztest.git
+  GIT_TAG           ${FUZZTEST_VERSION}
 )
+set(FUZZTEST_FUZZING_MODE ON CACHE BOOL "Enable FuzzTest fuzzing mode")
+FetchContent_MakeAvailable(fuzztest)
 
 set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable MbedTLS programs")
 set(ENABLE_TESTING OFF CACHE BOOL "Disable MbedTLS tests")

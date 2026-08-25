@@ -22,6 +22,9 @@ rusty-tags.*
 # Setuptools distribution folder.
 /scripts/dist/
 
+# antlr4 runtime install output from the fuzz build (fetched via CMake).
+/fuzz/dist/
+
 # Python egg metadata, regenerated from source files by setuptools.
 /scripts/*.egg-info
 /scripts/*.egg
