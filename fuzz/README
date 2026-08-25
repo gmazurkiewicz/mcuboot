@@ -1,5 +1,4 @@
-docker build --build-arg USERNAME=$(whoami) --build-arg UID=$(id -u) --build-arg GID=$(id -g) -t fwbuild .
-docker run -it --rm -v ./:/workspace fwbuild bash -c "cd fuzz && ./run.sh"
+./build.sh
 
 
 
