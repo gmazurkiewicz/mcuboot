@@ -27,6 +27,14 @@ FetchContent_MakeAvailable(fuzztest)
 # built without coverage instrumentation and the fuzzer runs blind.
 fuzztest_setup_fuzzing_flags()
 
+# Source-based coverage for the code under test only; FuzzTest and its
+# dependencies are added above and stay uninstrumented. See coverage.sh.
+option(FUZZ_COVERAGE "Emit clang source-based coverage data" OFF)
+if(FUZZ_COVERAGE)
+  add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+  add_link_options(-fprofile-instr-generate)
+endif()
+
 add_subdirectory(
   ${CMAKE_CURRENT_SOURCE_DIR}/../boot/bootutil
   ${CMAKE_CURRENT_BINARY_DIR}/bootutil

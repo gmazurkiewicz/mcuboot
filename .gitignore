@@ -25,6 +25,9 @@ rusty-tags.*
 # antlr4 runtime install output from the fuzz build (fetched via CMake).
 /fuzz/dist/
 
+# Coverage build output from the fuzz build
+/fuzz/build-coverage/
+
 # Python egg metadata, regenerated from source files by setuptools.
 /scripts/*.egg-info
 /scripts/*.egg
