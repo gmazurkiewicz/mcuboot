@@ -1,14 +1,19 @@
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 #include "fuzztest/fuzztest.h"
 #include "gtest/gtest.h"
 #include "bootutil/bootutil.h"
+#include "bootutil/bootutil_public.h"
+#include "bootutil/image.h"
 #include "storage/flash_map.h"
 
-/* Known-good signed image (128B header + payload + TLVs), used only to seed
- * the fuzzer so it starts mutating from a structurally valid input. */
+/* Known-good signed image (64B header + 128B payload + 336B TLVs = 528B),
+ * used to seed the fuzzer and as the mutation template below. */
 uint8_t img_out[] =
 {
     0x3d, 0xb8, 0xf3, 0x96, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
@@ -61,3 +66,151 @@ void InvokeBootGo(const std::vector<uint8_t> &image)
 FUZZ_TEST(McuBootSuite, InvokeBootGo)
     .WithDomains(fuzztest::Arbitrary<std::vector<uint8_t>>().WithMaxSize(kMaxImageSize))
     .WithSeeds({{std::vector<uint8_t>(img_out, img_out + sizeof(img_out))}});
+
+/* Byte layout of img_out (528B = 64B header + 128B payload + 336B TLV area),
+ * as produced by build.sh's `imgtool sign -H 64 --pad-header`: tlv_info at
+ * 192, SHA256 TLV value at 200, KEYHASH TLV value at 236, RSA2048_PSS
+ * signature value at 272. */
+constexpr size_t kTemplateSize = 528;
+constexpr size_t kPayloadOff = 64;
+constexpr size_t kPayloadSize = 128;
+constexpr size_t kShaValueOff = 200;
+constexpr size_t kShaValueSize = 32;
+constexpr size_t kKeyhashValueOff = 236;
+constexpr size_t kKeyhashValueSize = 32;
+constexpr size_t kSigValueOff = 272;
+constexpr size_t kSigValueSize = 256;
+static_assert(sizeof(img_out) == kTemplateSize,
+              "img_out layout changed; TLV offsets above need updating");
+
+/* Field-level mutation of a copy of img_out: each std::nullopt field leaves
+ * the template byte(s) untouched, keeping the rest of the image well-formed. */
+struct CandidateMutation {
+    std::optional<uint32_t> magic;
+    std::optional<uint32_t> load_addr;
+    std::optional<uint16_t> hdr_size;
+    std::optional<uint16_t> protect_tlv_size;
+    std::optional<uint32_t> img_size;
+    std::optional<uint32_t> flags;
+    std::optional<uint8_t> ver_major;
+    std::optional<uint8_t> ver_minor;
+    std::optional<uint16_t> ver_revision;
+    std::optional<uint32_t> ver_build;
+    std::optional<uint8_t> payload_byte_idx;
+    uint8_t payload_byte_val;
+    std::optional<uint8_t> hash_byte_idx;
+    uint8_t hash_byte_val;
+    std::optional<uint8_t> keyhash_byte_idx;
+    uint8_t keyhash_byte_val;
+    std::optional<uint8_t> sig_byte_idx;
+    uint8_t sig_byte_val;
+};
+
+/* Ground truth for the invariant checks: only a byte-for-byte-untouched
+ * candidate is expected to be acceptable. */
+bool IsUnmodified(const CandidateMutation &m)
+{
+    return !m.magic && !m.load_addr && !m.hdr_size && !m.protect_tlv_size &&
+           !m.img_size && !m.flags && !m.ver_major && !m.ver_minor &&
+           !m.ver_revision && !m.ver_build && !m.payload_byte_idx &&
+           !m.hash_byte_idx && !m.keyhash_byte_idx && !m.sig_byte_idx;
+}
+
+template <typename T>
+void WriteLE(std::array<uint8_t, kTemplateSize> &bytes, size_t off, T value)
+{
+    memcpy(bytes.data() + off, &value, sizeof(value));
+}
+
+std::array<uint8_t, kTemplateSize> BuildCandidateImage(const CandidateMutation &m)
+{
+    std::array<uint8_t, kTemplateSize> bytes;
+    memcpy(bytes.data(), img_out, kTemplateSize);
+
+    if (m.magic) WriteLE(bytes, offsetof(struct image_header, ih_magic), *m.magic);
+    if (m.load_addr) WriteLE(bytes, offsetof(struct image_header, ih_load_addr), *m.load_addr);
+    if (m.hdr_size) WriteLE(bytes, offsetof(struct image_header, ih_hdr_size), *m.hdr_size);
+    if (m.protect_tlv_size) WriteLE(bytes, offsetof(struct image_header, ih_protect_tlv_size), *m.protect_tlv_size);
+    if (m.img_size) WriteLE(bytes, offsetof(struct image_header, ih_img_size), *m.img_size);
+    if (m.flags) WriteLE(bytes, offsetof(struct image_header, ih_flags), *m.flags);
+    if (m.ver_major) WriteLE(bytes, offsetof(struct image_header, ih_ver) + offsetof(struct image_version, iv_major), *m.ver_major);
+    if (m.ver_minor) WriteLE(bytes, offsetof(struct image_header, ih_ver) + offsetof(struct image_version, iv_minor), *m.ver_minor);
+    if (m.ver_revision) WriteLE(bytes, offsetof(struct image_header, ih_ver) + offsetof(struct image_version, iv_revision), *m.ver_revision);
+    if (m.ver_build) WriteLE(bytes, offsetof(struct image_header, ih_ver) + offsetof(struct image_version, iv_build_num), *m.ver_build);
+
+    if (m.payload_byte_idx) bytes[kPayloadOff + *m.payload_byte_idx] = m.payload_byte_val;
+    if (m.hash_byte_idx) bytes[kShaValueOff + *m.hash_byte_idx] = m.hash_byte_val;
+    if (m.keyhash_byte_idx) bytes[kKeyhashValueOff + *m.keyhash_byte_idx] = m.keyhash_byte_val;
+    if (m.sig_byte_idx) bytes[kSigValueOff + *m.sig_byte_idx] = m.sig_byte_val;
+
+    return bytes;
+}
+
+bool PrimaryMatches(const uint8_t *expected, size_t len)
+{
+    return memcmp(flash_sim_get_mem(), expected, len) == 0;
+}
+
+/* Simulates: a known-good image already running in the primary slot, and a
+ * candidate update (fuzzed) staged in the secondary slot. Walks through
+ * boot_go() twice (initial swap decision, then a simulated reboot after
+ * optionally confirming) the way a real device would during a firmware
+ * upgrade, and checks that a bad candidate is never actually booted. */
+void InvokeBootUpgradeLifecycle(const CandidateMutation &mutation, bool confirm_after_swap)
+{
+    flash_sim_init();
+    memcpy(flash_sim_get_mem(), img_out, kTemplateSize);
+
+    std::array<uint8_t, kTemplateSize> candidate = BuildCandidateImage(mutation);
+    const struct flash_area *secondary = nullptr;
+    ASSERT_EQ(flash_area_open(2, &secondary), 0);
+    memcpy(flash_sim_get_mem() + secondary->fa_off, candidate.data(), candidate.size());
+
+    bool expected_valid = IsUnmodified(mutation);
+    auto assert_primary_consistent = [&](const char *stage) {
+        bool matches_template = PrimaryMatches(img_out, kTemplateSize);
+        bool matches_candidate = PrimaryMatches(candidate.data(), kTemplateSize);
+        ASSERT_TRUE(matches_template || matches_candidate)
+            << stage << ": primary slot holds neither the original nor the candidate image verbatim";
+        if (!expected_valid) {
+            ASSERT_TRUE(matches_template) << stage << ": an invalid candidate must never be booted";
+        }
+    };
+
+    ASSERT_EQ(boot_set_pending(/*permanent=*/0), 0);
+
+    struct boot_rsp rsp1 = {};
+    boot_go(&rsp1);
+    assert_primary_consistent("after first boot_go (swap decision)");
+
+    if (confirm_after_swap) {
+        boot_set_confirmed();
+    }
+
+    struct boot_rsp rsp2 = {};
+    boot_go(&rsp2);
+    assert_primary_consistent("after second boot_go (simulated reboot)");
+}
+FUZZ_TEST(McuBootSuite, InvokeBootUpgradeLifecycle)
+    .WithDomains(
+        fuzztest::StructOf<CandidateMutation>(
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint32_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint32_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint16_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint16_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint32_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint32_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint8_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint8_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint16_t>()),
+            fuzztest::OptionalOf(fuzztest::Arbitrary<uint32_t>()),
+            fuzztest::OptionalOf(fuzztest::InRange<uint8_t>(0, kPayloadSize - 1)),
+            fuzztest::Arbitrary<uint8_t>(),
+            fuzztest::OptionalOf(fuzztest::InRange<uint8_t>(0, kShaValueSize - 1)),
+            fuzztest::Arbitrary<uint8_t>(),
+            fuzztest::OptionalOf(fuzztest::InRange<uint8_t>(0, kKeyhashValueSize - 1)),
+            fuzztest::Arbitrary<uint8_t>(),
+            fuzztest::OptionalOf(fuzztest::InRange<uint8_t>(0, kSigValueSize - 1)),
+            fuzztest::Arbitrary<uint8_t>()),
+        fuzztest::Arbitrary<bool>())
+    .WithSeeds({{CandidateMutation{}, true}, {CandidateMutation{}, false}});
