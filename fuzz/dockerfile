@@ -16,16 +16,6 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-ARG USERNAME=devuser
-ARG UID=1000
-ARG GID=1000
-
-RUN groupadd -g ${GID} ${USERNAME} && \
-    useradd -m -u ${UID} -g ${GID} ${USERNAME}
-
-ARG WORKDIR=/workspace
-WORKDIR ${WORKDIR}
-
-USER ${USERNAME}
+WORKDIR /workspace
 
 CMD ["/bin/bash"]

@@ -3,11 +3,10 @@ services:
     build:
       context: ..
       dockerfile: fuzz/dockerfile
-      args:
-        USERNAME: ${USERNAME:-devuser}
-        UID: ${HOST_UID:-1000}
-        GID: ${HOST_GID:-1000}
     volumes:
       - ..:/workspace
     working_dir: /workspace/fuzz
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      HOME: /tmp
     command: ["./run.sh"]
