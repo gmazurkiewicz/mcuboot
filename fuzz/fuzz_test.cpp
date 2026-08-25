@@ -59,7 +59,9 @@ void InvokeBootGo(const std::vector<uint8_t> &image)
 {
     flash_sim_init();
     size_t len = std::min(image.size(), flash_sim_get_size());
-    memcpy(flash_sim_get_mem(), image.data(), len);
+    if (len > 0) {
+        memcpy(flash_sim_get_mem(), image.data(), len);
+    }
     struct boot_rsp rsp = {};
     boot_go(&rsp);
 }
