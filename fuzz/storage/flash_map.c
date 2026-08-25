@@ -195,3 +195,10 @@ uint8_t *flash_sim_get_mem(void)
 {
     return flash_mem;
 }
+
+/* Extra helper: total size of the simulated flash buffer, for callers that
+ * need to bound writes into it. */
+size_t flash_sim_get_size(void)
+{
+    return sizeof(flash_mem);
+}

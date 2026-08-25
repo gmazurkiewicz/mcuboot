@@ -42,6 +42,7 @@ extern "C" {
  * and match the target offset specified in download script.
  */
 #include <inttypes.h>
+#include <stddef.h>
 
 /**
  * @brief Structure describing an area on a flash device.
@@ -159,6 +160,7 @@ int flash_area_id_to_multi_image_slot(int image_index, int area_id);
 
 void flash_sim_init(void);
 uint8_t *flash_sim_get_mem(void);
+size_t flash_sim_get_size(void);
 
 #ifdef __cplusplus
 }

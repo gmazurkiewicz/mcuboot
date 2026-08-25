@@ -1,8 +1,14 @@
+#include <algorithm>
+#include <cstring>
+#include <vector>
+
 #include "fuzztest/fuzztest.h"
 #include "gtest/gtest.h"
 #include "bootutil/bootutil.h"
 #include "storage/flash_map.h"
 
+/* Known-good signed image (128B header + payload + TLVs), used only to seed
+ * the fuzzer so it starts mutating from a structurally valid input. */
 uint8_t img_out[] =
 {
     0x3d, 0xb8, 0xf3, 0x96, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
@@ -41,13 +47,17 @@ uint8_t img_out[] =
 };
 
 
-void InvokeBootGo()
+/* Must not exceed slot 0's size in storage/flash_map.c's areas[] table. */
+constexpr size_t kMaxImageSize = 128 * 1024;
+
+void InvokeBootGo(const std::vector<uint8_t> &image)
 {
     flash_sim_init();
-    memcpy(flash_sim_get_mem(), img_out, sizeof(img_out));
+    size_t len = std::min(image.size(), flash_sim_get_size());
+    memcpy(flash_sim_get_mem(), image.data(), len);
     struct boot_rsp rsp = {};
-    int res;
-    res = boot_go(&rsp);
-    ASSERT_EQ(res, 0);
+    boot_go(&rsp);
 }
-FUZZ_TEST(McuBootSuite, InvokeBootGo);
+FUZZ_TEST(McuBootSuite, InvokeBootGo)
+    .WithDomains(fuzztest::Arbitrary<std::vector<uint8_t>>().WithMaxSize(kMaxImageSize))
+    .WithSeeds({{std::vector<uint8_t>(img_out, img_out + sizeof(img_out))}});
