@@ -11,6 +11,10 @@ if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "Debug")
   set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Build type" FORCE)
 endif()
 
+# Applied before any add_subdirectory() so the code under test and every
+# dependency are instrumented identically. -fno-sanitize=null,alignment drops
+# the checks that false-positive on clang's SSE2 intrinsics (_mm_loadu_si128 in
+# emmintrin.h, reached via abseil's SwissTable), not on mcuboot code.
 add_compile_options(-fsanitize=address,undefined -fno-sanitize=null,alignment -fno-sanitize-recover=address,undefined)
 add_link_options(-fsanitize=address,undefined)
 
