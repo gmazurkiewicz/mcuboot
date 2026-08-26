@@ -606,8 +606,8 @@ find_last_sector_idx(const struct boot_loader_state *state, uint32_t copy_size)
     secondary_slot_size = 0;
     last_sector_idx_primary = 0;
     last_sector_idx_secondary = 0;
-    num_sectors_primary = (int)boot_img_num_sectors(state, BOOT_PRIMARY_SLOT);
-    num_sectors_secondary = (int)boot_img_num_sectors(state, BOOT_SECONDARY_SLOT);
+    num_sectors_primary = (int)boot_img_num_sectors(state, BOOT_SLOT_PRIMARY);
+    num_sectors_secondary = (int)boot_img_num_sectors(state, BOOT_SLOT_SECONDARY);
 
     /*
      * Knowing the size of the largest image between both slots, here we

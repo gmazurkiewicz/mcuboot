@@ -36,7 +36,7 @@ llvm-profdata-19 merge -sparse "${PROFRAW_DIR}"/*.profraw -o "${BUILD_DIR}/fuzz.
 cov_args=(
     "${BUILD_DIR}/fuzz_test"
     "-instr-profile=${BUILD_DIR}/fuzz.profdata"
-    '-ignore-filename-regex=(_deps|ext/mbedtls)/'
+    '-ignore-filename-regex=(_deps|ext/mbedtls[^/]*)/'
 )
 
 llvm-cov-19 report "${cov_args[@]}"

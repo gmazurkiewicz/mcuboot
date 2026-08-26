@@ -54,7 +54,7 @@ find_last_sector_idx(const struct boot_loader_state *state, uint32_t copy_size)
         if ((primary_slot_size < copy_size) ||
             (primary_slot_size < secondary_slot_size)) {
            primary_slot_size += boot_img_sector_size(state,
-                                                     BOOT_PRIMARY_SLOT,
+                                                     BOOT_SLOT_PRIMARY,
                                                      last_sector_idx_primary);
             ++last_sector_idx_primary;      /* <- never bounded */
         }
@@ -179,8 +179,8 @@ Bound the walk by the sector counts and report failure; both callers already
 treat a negative index as "nothing to swap".
 
 ```c
-+    num_sectors_primary = (int)boot_img_num_sectors(state, BOOT_PRIMARY_SLOT);
-+    num_sectors_secondary = (int)boot_img_num_sectors(state, BOOT_SECONDARY_SLOT);
++    num_sectors_primary = (int)boot_img_num_sectors(state, BOOT_SLOT_PRIMARY);
++    num_sectors_secondary = (int)boot_img_num_sectors(state, BOOT_SLOT_SECONDARY);
      while (1) {
 +        /* copy_size can come from an image trailer, so it is not necessarily
 +         * trustworthy; refuse to walk off the end of the sector tables.

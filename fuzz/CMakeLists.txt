@@ -52,7 +52,7 @@ set(ENABLE_PROGRAMS OFF CACHE BOOL "Disable MbedTLS programs")
 set(ENABLE_TESTING OFF CACHE BOOL "Disable MbedTLS tests")
 
 add_subdirectory(
-  ${CMAKE_CURRENT_SOURCE_DIR}/../ext/mbedtls
+  ${CMAKE_CURRENT_SOURCE_DIR}/../ext/mbedtls-3.6.0
   ${CMAKE_CURRENT_BINARY_DIR}/mbedtls
   EXCLUDE_FROM_ALL
 )
