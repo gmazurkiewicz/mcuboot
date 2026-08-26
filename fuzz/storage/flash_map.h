@@ -162,6 +162,28 @@ void flash_sim_init(void);
 uint8_t *flash_sim_get_mem(void);
 size_t flash_sim_get_size(void);
 
+/*
+ * Power-cut fault injection.
+ *
+ * Every write/erase increments a counter. When the counter reaches the armed
+ * op index the simulator applies at most a prefix of that operation and then
+ * longjmp()s back to flash_sim_power_cut_jmpbuf(), modelling a device that
+ * lost power in the middle of programming flash. The RAM buffer keeps its
+ * contents, so the next boot sees exactly the half-finished flash a real
+ * device would see.
+ */
+#include <setjmp.h>
+
+void flash_sim_reset_op_count(void);
+unsigned long flash_sim_op_count(void);
+
+/* op_index is 1-based; 0 disarms. If partial is non-zero the interrupted
+ * operation is applied to the first half of its range before cutting. */
+void flash_sim_arm_power_cut(unsigned long op_index, int partial);
+void flash_sim_disarm_power_cut(void);
+int flash_sim_power_cut_happened(void);
+jmp_buf *flash_sim_power_cut_jmpbuf(void);
+
 #ifdef __cplusplus
 }
 #endif

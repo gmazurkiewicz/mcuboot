@@ -28,6 +28,8 @@ run() {
 run '--gtest_filter=-SanitizerSuite.*'
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootGo
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootUpgradeLifecycle
+run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootSurvivesPowerCutsDuringSwap
+run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootNeverRunsUnauthenticatedImage
 
 llvm-profdata-19 merge -sparse "${PROFRAW_DIR}"/*.profraw -o "${BUILD_DIR}/fuzz.profdata"
 

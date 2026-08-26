@@ -13,3 +13,10 @@ pip install -r ../scripts/requirements.txt
 dd if=/dev/urandom of=img.in
 dd if=/dev/urandom of=img.in bs=128 count=1
 ../scripts/imgtool.py sign -S 131072 -H 64 --pad-header -v 4.4.6 -k ../root-rsa-2048.pem img.in img.out
+
+# img_candidate[] in fuzz_test.cpp: a second, independently signed image, so
+# that a swap is observable by comparing raw slot bytes.
+dd if=/dev/urandom of=img2.in bs=128 count=1
+../scripts/imgtool.py sign -S 131072 -H 64 --pad-header -v 5.0.0 -k ../root-rsa-2048.pem img2.in img2.out
+
+./bin2array.py img.out

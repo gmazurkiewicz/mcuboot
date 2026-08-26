@@ -28,6 +28,63 @@
 /* Global memory simulating flash */
 static uint8_t flash_mem[DEVICE_FLASH_SIZE];
 
+/* Power-cut fault injection state; see flash_map.h. */
+static unsigned long op_count;
+static unsigned long cut_at;
+static int cut_partial;
+static int cut_happened;
+static jmp_buf cut_jmpbuf;
+
+/* Returns the number of bytes the caller may apply before power is lost, or
+ * -1 when the operation is allowed to complete. */
+static long power_cut_prefix(uint32_t len)
+{
+    ++op_count;
+    if (cut_at == 0 || op_count != cut_at) {
+        return -1;
+    }
+    return cut_partial ? (long)(len / 2) : 0;
+}
+
+static void power_cut(void)
+{
+    cut_happened = 1;
+    cut_at = 0;
+    longjmp(cut_jmpbuf, 1);
+}
+
+void flash_sim_reset_op_count(void)
+{
+    op_count = 0;
+}
+
+unsigned long flash_sim_op_count(void)
+{
+    return op_count;
+}
+
+void flash_sim_arm_power_cut(unsigned long op_index, int partial)
+{
+    cut_at = op_index;
+    cut_partial = partial;
+    cut_happened = 0;
+}
+
+void flash_sim_disarm_power_cut(void)
+{
+    cut_at = 0;
+}
+
+int flash_sim_power_cut_happened(void)
+{
+    return cut_happened;
+}
+
+jmp_buf *flash_sim_power_cut_jmpbuf(void)
+{
+    return &cut_jmpbuf;
+}
+
 /* Simple flash area map (three image slots). fa_id must be unique and start from 1. */
 static struct flash_area areas[] = {
     /* fa_id, fa_device_id, pad16, fa_off, fa_size */
@@ -99,8 +156,13 @@ int flash_area_write(const struct flash_area *fa, uint32_t off, const void *src,
             return -1;
         }
     }
-    for (uint32_t i = 0; i < len; ++i) {
+    long cut = power_cut_prefix(len);
+    uint32_t applied = (cut < 0) ? len : (uint32_t)cut;
+    for (uint32_t i = 0; i < applied; ++i) {
         d[i] &= s[i];
+    }
+    if (cut >= 0) {
+        power_cut();
     }
     return 0;
 }
@@ -108,7 +170,11 @@ int flash_area_write(const struct flash_area *fa, uint32_t off, const void *src,
 int flash_area_erase(const struct flash_area *fa, uint32_t off, uint32_t len)
 {
     if (check_range(fa, off, len) != 0) return -1;
-    memset(&flash_mem[fa->fa_off + off], ERASED_VAL, len);
+    long cut = power_cut_prefix(len);
+    memset(&flash_mem[fa->fa_off + off], ERASED_VAL, (cut < 0) ? len : (size_t)cut);
+    if (cut >= 0) {
+        power_cut();
+    }
     return 0;
 }
 
@@ -188,6 +254,10 @@ int flash_area_id_to_multi_image_slot(int image_index, int area_id)
 void flash_sim_init(void)
 {
     memset(flash_mem, ERASED_VAL, sizeof(flash_mem));
+    op_count = 0;
+    cut_at = 0;
+    cut_partial = 0;
+    cut_happened = 0;
 }
 
 /* Extra helper: return pointer to raw simulated memory (for debug/testing). */
