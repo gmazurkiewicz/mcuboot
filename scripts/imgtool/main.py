@@ -17,22 +17,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import re
-import click
-import getpass
-import imgtool.keys as keys
-import sys
-import struct
-import os
-import lzma
-import hashlib
 import base64
-from collections import namedtuple
+import getpass
+import lzma
+import re
+import struct
+import sys
+from pathlib import Path
+
+import click
+
+import imgtool.keys as keys
 from imgtool import image, imgtool_version
-from imgtool.version import decode_version
 from imgtool.dumpinfo import dump_imginfo
-from .keys import (
-    RSAUsageError, ECDSAUsageError, Ed25519UsageError, X25519UsageError)
+from imgtool.version import decode_version
+
+from .keys import ECDSAUsageError, Ed25519UsageError, RSAUsageError, X25519UsageError
 
 comp_default_dictsize=131072
 comp_default_pb=2
@@ -43,17 +43,8 @@ comp_default_preset=9
 
 MIN_PYTHON_VERSION = (3, 6)
 if sys.version_info < MIN_PYTHON_VERSION:
-    sys.exit("Python %s.%s or newer is required by imgtool."
-             % MIN_PYTHON_VERSION)
+    sys.exit("Python {}.{} or newer is required by imgtool.".format(*MIN_PYTHON_VERSION))
 
-SlottedSemiSemVersion = namedtuple('SemiSemVersion', ['major', 'minor', 'revision',
-                                               'build', 'slot'])
-
-DEPENDENCY_SLOT_VALUES = {
-    'active': 0x00,
-    'primary': 0x01,
-    'secondary': 0x02
-}
 
 def gen_rsa2048(keyfile, passwd):
     keys.RSA.generate().export_private(path=keyfile, passwd=passwd)
@@ -83,6 +74,17 @@ def gen_x25519(keyfile, passwd):
 valid_langs = ['c', 'rust']
 valid_hash_encodings = ['lang-c', 'raw']
 valid_encodings = ['lang-c', 'lang-rust', 'pem', 'raw']
+
+
+def _validate_name_suffix(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    if value and not re.match(r"^[A-Za-z0-9_]*$", value):
+        raise click.BadParameter(
+            f"{value!r} must contain only [A-Za-z0-9_]; it is appended "
+            f"directly to a C/Rust identifier."
+        )
+    return value
+
+
 keygens = {
     'rsa-2048':   gen_rsa2048,
     'rsa-3072':   gen_rsa3072,
@@ -150,19 +152,28 @@ def keygen(type, key, password):
 @click.option('-e', '--encoding', metavar='encoding',
               type=click.Choice(valid_encodings),
               help='Valid encodings: {}'.format(', '.join(valid_encodings)))
+@click.option('--name-suffix', 'name_suffix', metavar='SUFFIX', default='',
+              callback=_validate_name_suffix,
+              help='Append SUFFIX to the emitted C/Rust symbol names '
+                   '(e.g. `--name-suffix _2` emits `rsa_pub_key_2` / '
+                   '`rsa_pub_key_2_len`). Useful when embedding multiple '
+                   'signing keys in the same image. Ignored for PEM/raw '
+                   'encodings (those emit no identifiers).')
 @click.option('-k', '--key', metavar='filename', required=True)
 @click.option('-o', '--output', metavar='output', required=False,
               help='Specify the output file\'s name. \
                     The stdout is used if it is not provided.')
 @click.command(help='Dump public key from keypair')
-def getpub(key, encoding, lang, output):
+def getpub(key, encoding, lang, output, name_suffix):
     if encoding and lang:
-        raise click.UsageError('Please use only one of `--encoding/-e` '
-                               'or `--lang/-l`')
+        raise click.UsageError('Please use only one of `--encoding/-e` or `--lang/-l`')
     elif not encoding and not lang:
         # Preserve old behavior defaulting to `c`. If `lang` is removed,
         # `default=valid_encodings[0]` should be added to `-e` param.
         lang = valid_langs[0]
+    if name_suffix and (encoding in ('pem', 'raw')):
+        raise click.UsageError(
+            '`--name-suffix` is only meaningful for lang-c / lang-rust encodings')
     key = load_key(key)
 
     if not output:
@@ -170,9 +181,9 @@ def getpub(key, encoding, lang, output):
     if key is None:
         print("Invalid passphrase")
     elif lang == 'c' or encoding == 'lang-c':
-        key.emit_c_public(file=output)
+        key.emit_c_public(file=output, name_suffix=name_suffix)
     elif lang == 'rust' or encoding == 'lang-rust':
-        key.emit_rust_public(file=output)
+        key.emit_rust_public(file=output, name_suffix=name_suffix)
     elif encoding == 'pem':
         key.emit_public_pem(file=output)
     elif encoding == 'raw':
@@ -187,14 +198,21 @@ def getpub(key, encoding, lang, output):
                    'Default value is {}.'
                    .format(', '.join(valid_hash_encodings),
                            valid_hash_encodings[0]))
+@click.option('--name-suffix', 'name_suffix', metavar='SUFFIX', default='',
+              callback=_validate_name_suffix,
+              help='Append SUFFIX to the emitted C symbol names (lang-c '
+                   'encoding only). Ignored for raw encoding.')
 @click.option('-k', '--key', metavar='filename', required=True)
 @click.option('-o', '--output', metavar='output', required=False,
               help='Specify the output file\'s name. \
                     The stdout is used if it is not provided.')
 @click.command(help='Dump the SHA256 hash of the public key')
-def getpubhash(key, output, encoding):
+def getpubhash(key, output, encoding, name_suffix):
     if not encoding:
         encoding = valid_hash_encodings[0]
+    if name_suffix and encoding == 'raw':
+        raise click.UsageError(
+            '`--name-suffix` is only meaningful for the lang-c encoding')
     key = load_key(key)
 
     if not output:
@@ -202,11 +220,39 @@ def getpubhash(key, output, encoding):
     if key is None:
         print("Invalid passphrase")
     elif encoding == 'lang-c':
-        key.emit_c_public_hash(file=output)
+        key.emit_c_public_hash(file=output, name_suffix=name_suffix)
     elif encoding == 'raw':
         key.emit_raw_public_hash(file=output)
     else:
         raise click.UsageError()
+
+
+@click.option('--require', 'require', type=click.Choice(['private', 'public']),
+              default=None,
+              help='Exit non-zero if the key kind does not match REQUIRE. '
+                   'Without this option, keyinfo always exits 0 and prints '
+                   'the detected kind on stdout.')
+@click.option('-k', '--key', metavar='filename', required=True)
+@click.command(help='Print whether KEY is a keypair PEM (`private`) or a '
+                    'public-only PEM (`public`). Intended for build-system '
+                    'use: pair with `--require` to gate the build on the '
+                    'expected key kind.')
+def keyinfo(key, require):
+    loaded = keys.load(key)
+    if loaded is None:
+        raise click.UsageError(
+            f"Cannot inspect {key}: key is password-protected or unreadable. "
+            f"keyinfo runs non-interactively and does not prompt for a "
+            f"passphrase."
+        )
+    kind = ('private'
+            if isinstance(loaded, (keys.PayloadSigner, keys.DigestSigner))
+            else 'public')
+    click.echo(kind)
+    if require is not None and kind != require:
+        raise click.UsageError(
+            f"Key {key} is {kind}, but {require} was required."
+        )
 
 
 @click.option('--minimal', default=False, is_flag=True,
@@ -226,9 +272,8 @@ def getpriv(key, minimal, format):
         print("Invalid passphrase")
     try:
         key.emit_private(minimal, format)
-    except (RSAUsageError, ECDSAUsageError, Ed25519UsageError,
-            X25519UsageError) as e:
-        raise click.UsageError(e)
+    except (RSAUsageError, ECDSAUsageError, Ed25519UsageError, X25519UsageError) as e:
+        raise click.UsageError(e) from e
 
 
 @click.argument('imgfile')
@@ -241,9 +286,9 @@ def verify(key, imgfile):
         print("Image was correctly validated")
         print("Image version: {}.{}.{}+{}".format(*version))
         if digest:
-            print("Image digest: {}".format(digest.hex()))
+            print(f"Image digest: {digest.hex()}")
         if signature and digest is None:
-            print("Image signature over image: {}".format(signature.hex()))
+            print(f"Image signature over image: {signature.hex()}")
         return
     elif ret == image.VerifyResult.INVALID_MAGIC:
         print("Invalid image magic; is this an MCUboot image?")
@@ -256,21 +301,22 @@ def verify(key, imgfile):
     elif ret == image.VerifyResult.KEY_MISMATCH:
         print("Key type does not match TLV record")
     else:
-        print("Unknown return code: {}".format(ret))
+        print(f"Unknown return code: {ret}")
     sys.exit(1)
 
 
 @click.argument('imgfile')
 @click.option('-o', '--outfile', metavar='filename', required=False,
-              help='Save image information to outfile in YAML format')
+              help='Save image information to outfile')
+@click.option('-f', '--format', 'output_format',
+              type=click.Choice(['human', 'yaml', 'json']),
+              help='Output format (human, yaml, json). Default: human for stdout, yaml for file')
 @click.option('-s', '--silent', default=False, is_flag=True,
               help='Do not print image information to output')
 @click.command(help='Print header, TLV area and trailer information '
                     'of a signed image')
-def dumpinfo(imgfile, outfile, silent):
-    dump_imginfo(imgfile, outfile, silent)
-    if not silent:
-        print("dumpinfo has run successfully")
+def dumpinfo(imgfile, outfile, output_format, silent):
+    dump_imginfo(imgfile, outfile, output_format, silent)
 
 
 def validate_version(ctx, param, value):
@@ -278,7 +324,7 @@ def validate_version(ctx, param, value):
         decode_version(value)
         return value
     except ValueError as e:
-        raise click.BadParameter("{}".format(e))
+        raise click.BadParameter(f"{e}") from None
 
 
 def validate_security_counter(ctx, param, value):
@@ -290,16 +336,16 @@ def validate_security_counter(ctx, param, value):
                 return int(value, 0)
             except ValueError:
                 raise click.BadParameter(
-                    "{} is not a valid integer. Please use code literals "
+                    f"{value} is not a valid integer. Please use code literals "
                     "prefixed with 0b/0B, 0o/0O, or 0x/0X as necessary."
-                    .format(value))
+                ) from None
 
 
 def validate_header_size(ctx, param, value):
     min_hdr_size = image.IMAGE_HEADER_SIZE
     if value < min_hdr_size:
         raise click.BadParameter(
-            "Minimum value for -H/--header-size is {}".format(min_hdr_size))
+            f"Minimum value for -H/--header-size is {min_hdr_size}")
     return value
 
 
@@ -309,34 +355,17 @@ def get_dependencies(ctx, param, value):
         images = re.findall(r"\((\d+)", value)
         if len(images) == 0:
             raise click.BadParameter(
-                "Image dependency format is invalid: {}".format(value))
-        raw_versions = re.findall(r",\s*((active|primary|secondary)\s*,)?\s*([0-9.+]+)\)", value)
+                f"Image dependency format is invalid: {value}")
+        raw_versions = re.findall(r",\s*([0-9.+]+)\)", value)
         if len(images) != len(raw_versions):
             raise click.BadParameter(
-                '''There's a mismatch between the number of dependency images
-                and versions in: {}'''.format(value))
+                f'''There's a mismatch between the number of dependency images
+                and versions in: {value}''')
         for raw_version in raw_versions:
             try:
-                decoded_version = decode_version(raw_version[2])
-                if len(raw_version[1]) > 0:
-                    slotted_version = SlottedSemiSemVersion(
-                        decoded_version.major,
-                        decoded_version.minor,
-                        decoded_version.revision,
-                        decoded_version.build,
-                        DEPENDENCY_SLOT_VALUES[raw_version[1]]
-                    )
-                else:
-                    slotted_version = SlottedSemiSemVersion(
-                        decoded_version.major,
-                        decoded_version.minor,
-                        decoded_version.revision,
-                        decoded_version.build,
-                        0
-                    )
+                versions.append(decode_version(raw_version))
             except ValueError as e:
-                raise click.BadParameter("{}".format(e))
-            versions.append(slotted_version)
+                raise click.BadParameter(f"{e}") from None
         dependencies = dict()
         dependencies[image.DEP_IMAGES_KEY] = images
         dependencies[image.DEP_VERSIONS_KEY] = versions
@@ -358,9 +387,8 @@ class BasedIntParamType(click.ParamType):
         try:
             return int(value, 0)
         except ValueError:
-            self.fail('%s is not a valid integer. Please use code literals '
-                      'prefixed with 0b/0B, 0o/0O, or 0x/0X as necessary.'
-                      % value, param, ctx)
+            self.fail(f'{value} is not a valid integer. Please use code literals '
+                      'prefixed with 0b/0B, 0o/0O, or 0x/0X as necessary.', param, ctx)
 
 
 @click.argument('outfile')
@@ -373,6 +401,12 @@ class BasedIntParamType(click.ParamType):
                    'Add "0x" prefix if the value should be interpreted as an '
                    'integer, otherwise it will be interpreted as a string. '
                    'Specify the option multiple times to add multiple TLVs.')
+@click.option('--custom-tlv-file', required=False, nargs=2, default=[],
+              multiple=True, metavar='[tag] [filename]',
+              help='Custom TLV that will be placed into protected area. '
+                   'The second argument is the path to a binary file '
+                   'containing the TLV data. Specify the option multiple '
+                   'times to add multiple TLVs.')
 @click.option('-R', '--erased-val', type=click.Choice(['0', '0xff']),
               required=False,
               help='The value that is read back from erased flash.')
@@ -416,6 +450,9 @@ class BasedIntParamType(click.ParamType):
 @click.option('--confirm', default=False, is_flag=True,
               help='When padding the image, mark it as confirmed (implies '
                    '--pad)')
+@click.option('--test', default=False, is_flag=True,
+              help='When padding the image, mark it for a test swap (implies '
+                   '--pad)')
 @click.option('--pad', default=False, is_flag=True,
               help='Pad image to --slot-size bytes, adding trailer magic')
 @click.option('-S', '--slot-size', type=BasedIntParamType(), required=True,
@@ -431,7 +468,7 @@ class BasedIntParamType(click.ParamType):
                    '(for mcuboot <1.5)')
 @click.option('-d', '--dependencies', callback=get_dependencies,
               required=False, help='''Add dependence on another image, format:
-              "(<image_ID>,[<slot:active|primary|secondary>,]<image_version>), ... "''')
+              "(<image_ID>,<image_version>), ... "''')
 @click.option('-s', '--security-counter', callback=validate_security_counter,
               help='Specify the value of security counter. Use the `auto` '
               'keyword to automatically generate it from the image version.')
@@ -473,56 +510,68 @@ class BasedIntParamType(click.ParamType):
 @click.command(help='''Create a signed or unsigned image\n
                INFILE and OUTFILE are parsed as Intel HEX if the params have
                .hex extension, otherwise binary format is used''')
+@click.option('--vid', default=None, required=False,
+              help='Unique vendor identifier, format: (<raw_uuid>|<domain_name)>')
+@click.option('--cid', default=None, required=False,
+              help='Unique image class identifier, format: (<raw_uuid>|<image_class_name>)')
 def sign(key, public_key_format, align, version, pad_sig, header_size,
-         pad_header, slot_size, pad, confirm, max_sectors, overwrite_only,
+         pad_header, slot_size, pad, confirm, test, max_sectors, overwrite_only,
          endian, encrypt_keylen, encrypt, compression, infile, outfile,
          dependencies, load_addr, hex_addr, erased_val, save_enctlv,
-         security_counter, boot_record, custom_tlv, rom_fixed, max_align,
+         security_counter, boot_record, custom_tlv, custom_tlv_file, rom_fixed, max_align,
          clear, fix_sig, fix_sig_pubkey, sig_out, user_sha, hmac_sha, is_pure,
-         vector_to_sign, non_bootable):
+         vector_to_sign, non_bootable, vid, cid):
 
-    if confirm:
+    if confirm or test:
         # Confirmed but non-padded images don't make much sense, because
         # otherwise there's no trailer area for writing the confirmed status.
         pad = True
     img = image.Image(version=decode_version(version), header_size=header_size,
                       pad_header=pad_header, pad=pad, confirm=confirm,
-                      align=int(align), slot_size=slot_size,
+                      test=test, align=int(align), slot_size=slot_size,
                       max_sectors=max_sectors, overwrite_only=overwrite_only,
                       endian=endian, load_addr=load_addr, rom_fixed=rom_fixed,
                       erased_val=erased_val, save_enctlv=save_enctlv,
                       security_counter=security_counter, max_align=max_align,
-                      non_bootable=non_bootable)
+                      non_bootable=non_bootable, vid=vid, cid=cid)
     compression_tlvs = {}
     img.load(infile)
     key = load_key(key) if key else None
+    if key is not None and not isinstance(key, (keys.PayloadSigner, keys.DigestSigner)):
+        raise click.UsageError(
+            "Cannot sign with a public-only PEM; signing requires the "
+            "private key."
+        )
     enckey = load_key(encrypt) if encrypt else None
-    if enckey and key:
-        if ((isinstance(key, keys.ECDSA256P1) and
-             not isinstance(enckey, keys.ECDSA256P1Public))
-           or (isinstance(key, keys.ECDSA384P1) and
-               not isinstance(enckey, keys.ECDSA384P1Public))
-                or (isinstance(key, keys.RSA) and
-                    not isinstance(enckey, keys.RSAPublic))):
-            # FIXME
-            raise click.UsageError("Signing and encryption must use the same "
-                                   "type of key")
+    if enckey and key and ((isinstance(key, keys.ECDSA256P1) and
+         not isinstance(enckey, keys.ECDSA256P1Public))
+       or (isinstance(key, keys.ECDSA384P1) and
+           not isinstance(enckey, keys.ECDSA384P1Public))
+            or (isinstance(key, keys.RSA) and
+                not isinstance(enckey, keys.RSAPublic))):
+        # FIXME
+        raise click.UsageError("Signing and encryption must use the same "
+                               "type of key")
 
     if pad_sig and hasattr(key, 'pad_sig'):
         key.pad_sig = True
 
     # Get list of custom protected TLVs from the command-line
     custom_tlvs = {}
-    for tlv in custom_tlv:
+    custom_tlv_args = list(custom_tlv) + [(tag, Path(fn)) for tag, fn in custom_tlv_file]
+    for tlv in custom_tlv_args:
         tag = int(tlv[0], 0)
         if tag in custom_tlvs:
-            raise click.UsageError('Custom TLV %s already exists.' % hex(tag))
+            raise click.UsageError(f'Custom TLV {hex(tag)} already exists.')
         if tag in image.TLV_VALUES.values():
             raise click.UsageError(
-                'Custom TLV %s conflicts with predefined TLV.' % hex(tag))
+                f'Custom TLV {hex(tag)} conflicts with predefined TLV.')
 
         value = tlv[1]
-        if value.startswith('0x'):
+        if isinstance(value, Path):
+            with value.open("rb") as fp:
+                custom_tlvs[tag] = fp.read()
+        elif value.startswith('0x'):
             if len(value[2:]) % 2:
                 raise click.UsageError('Custom TLV length is odd.')
             custom_tlvs[tag] = bytes.fromhex(value[2:])
@@ -563,7 +612,8 @@ def sign(key, public_key_format, align, version, pad_sig, header_size,
                   overwrite_only=overwrite_only, endian=endian,
                   load_addr=load_addr, rom_fixed=rom_fixed,
                   erased_val=erased_val, save_enctlv=save_enctlv,
-                  security_counter=security_counter, max_align=max_align)
+                  security_counter=security_counter, max_align=max_align,
+                  vid=vid, cid=cid)
         compression_filters = [
             {"id": lzma.FILTER_LZMA2, "preset": comp_default_preset,
                 "dict_size": comp_default_dictsize, "lp": comp_default_lp,
@@ -593,7 +643,7 @@ def sign(key, public_key_format, align, version, pad_sig, header_size,
                 lc = comp_default_lc, lp = comp_default_lp)
             compressed_img.load_compressed(compressed_data, compression_header)
             compressed_img.base_addr = img.base_addr
-            keep_comp_size = False;
+            keep_comp_size = False
             if enckey:
                 keep_comp_size = True
             compressed_img.create(key, public_key_format, enckey,
@@ -648,6 +698,7 @@ imgtool.add_command(keygen)
 imgtool.add_command(getpub)
 imgtool.add_command(getpubhash)
 imgtool.add_command(getpriv)
+imgtool.add_command(keyinfo)
 imgtool.add_command(verify)
 imgtool.add_command(sign)
 imgtool.add_command(version)

@@ -16,6 +16,7 @@ config MCUBOOT
 	select MPU_ALLOW_FLASH_WRITE if ARM_MPU
 	select USE_DT_CODE_PARTITION if HAS_FLASH_LOAD_OFFSET
 	select MCUBOOT_BOOTUTIL_LIB
+	select IS_BOOTLOADER
 
 config BOOT_USE_MBEDTLS
 	bool
@@ -27,7 +28,7 @@ config BOOT_USE_PSA_CRYPTO
 	bool
 	# Hidden option
 	help
-	  Hidden option set if using PSA crypt for cryptography functionality
+	  Hidden option set if using PSA crypto for cryptography functionality
 
 config BOOT_USE_TINYCRYPT
 	bool
@@ -124,7 +125,8 @@ config BOOT_ECDSA_PSA_DEPENDENCIES
 if MBEDTLS_ENABLE_HEAP
 
 config MBEDTLS_HEAP_SIZE
-	default 2048 if BOOT_USE_PSA_CRYPTO
+	default 8192 if BOOT_RSA_PSA
+	default 2048 if BOOT_ED25519_PSA
 	help
 	  The PSA internals need to be able to allocate memory for operation
 	  and it uses mbedTLS heap for that.
@@ -134,13 +136,6 @@ endif # MBEDTLS_ENABLE_HEAP
 endif # BOOT_USE_PSA_CRYPTO
 
 menu "MCUBoot settings"
-
-config SINGLE_APPLICATION_SLOT
-	bool "Single slot bootloader"
-	help
-	  Single image area is used for application which means that
-	  uploading a new application overwrites the one that previously
-	  occupied the area.
 
 config BOOT_SOMETHING_USES_SHA256
 	bool
@@ -250,14 +245,8 @@ config BOOT_SIGNATURE_TYPE_NONE
 
 config BOOT_SIGNATURE_TYPE_RSA
 	bool "RSA signatures"
-	select BOOT_USE_MBEDTLS
-	select MBEDTLS
 	select MBEDTLS_ASN1_PARSE_C if MBEDTLS_BUILTIN
-	select MBEDTLS_MD if MBEDTLS_BUILTIN
-	select MBEDTLS_RSA_C if MBEDTLS_BUILTIN
-	select MBEDTLS_PKCS1_V15 if MBEDTLS_BUILTIN
-	select MBEDTLS_PKCS1_V21 if MBEDTLS_BUILTIN
-	select MBEDTLS_KEY_EXCHANGE_RSA_ENABLED if MBEDTLS_BUILTIN
+	select MBEDTLS_MD_C if MBEDTLS_BUILTIN
 	select BOOT_ENCRYPTION_SUPPORT
 	select BOOT_IMG_HASH_ALG_SHA256_ALLOW
 	select BOOT_AES_MBEDTLS_DEPENDENCIES if MBEDTLS_BUILTIN && BOOT_ENCRYPT_IMAGE
@@ -267,7 +256,54 @@ config BOOT_SIGNATURE_TYPE_RSA_LEN
 	int "RSA signature length"
 	range 2048 3072
 	default 2048
-endif
+
+choice BOOT_RSA_IMPLEMENTATION
+	prompt "RSA implementation"
+	# In TF-PSA-Crypto legacy crypto modules are internal and not meant
+	# to be used by the app. PSA API should be used instead. However this
+	# is not always possible in MCUboot due to the constrained partition
+	# size, so we default to using legacy crypto.
+	default BOOT_RSA_TF_PSA_CRYPTO_LEGACY if MBEDTLS_VERSION_4_x
+	default BOOT_RSA_MBEDTLS_LEGACY
+
+config BOOT_RSA_MBEDTLS_LEGACY
+	bool "Use legacy crypto from Mbed TLS 3.x"
+	select BOOT_USE_MBEDTLS
+	select MBEDTLS
+	select MBEDTLS_RSA_C if MBEDTLS_BUILTIN
+	select MBEDTLS_PKCS1_V15 if MBEDTLS_BUILTIN
+	select MBEDTLS_PKCS1_V21 if MBEDTLS_BUILTIN
+
+	# This is a mix between BOOT_RSA_MBEDTLS_LEGACY and BOOT_RSA_PSA in the
+	# sense that we select PSA_WANT but still use legacy crypto under the
+	# hood to minimize footprint.
+config BOOT_RSA_TF_PSA_CRYPTO_LEGACY
+	bool "Use legacy crypto from TF-PSA-Crypto (i.e. Mbed TLS 4.x)"
+	select BOOT_USE_MBEDTLS
+	select PSA_CRYPTO
+	select TEST_RANDOM_GENERATOR if !ENTROPY_HAS_DRIVER
+	select PSA_WANT_KEY_TYPE_RSA_PUBLIC_KEY
+	select PSA_WANT_ALG_RSA_PKCKS1_V15
+	select PSA_WANT_ALG_RSA_PSS
+	select PSA_WANT_ALG_SHA_256
+	select PSA_WANT_KEY_TYPE_AES if BOOT_ENCRYPT_IMAGE
+	select PSA_WANT_ALG_CTR if BOOT_ENCRYPT_IMAGE
+	select MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+
+config BOOT_RSA_PSA
+	bool "Use PSA API crypto"
+	select BOOT_USE_PSA_CRYPTO
+	select PSA_CRYPTO
+	select TEST_RANDOM_GENERATOR if !ENTROPY_HAS_DRIVER
+	select MBEDTLS_ENABLE_HEAP if MBEDTLS_BUILTIN
+	select PSA_WANT_KEY_TYPE_RSA_PUBLIC_KEY
+	select PSA_WANT_ALG_RSA_PKCKS1_V15
+	select PSA_WANT_ALG_RSA_PSS
+	select PSA_WANT_ALG_SHA_256
+
+endchoice
+
+endif # BOOT_SIGNATURE_TYPE_RSA
 
 config BOOT_SIGNATURE_TYPE_ECDSA_P256
 	bool "Elliptic curve digital signatures with curve P-256"
@@ -275,6 +311,7 @@ config BOOT_SIGNATURE_TYPE_ECDSA_P256
 	select BOOT_IMG_HASH_ALG_SHA256_ALLOW
 
 if BOOT_SIGNATURE_TYPE_ECDSA_P256
+
 choice BOOT_ECDSA_IMPLEMENTATION
 	prompt "Ecdsa implementation"
 	default BOOT_ECDSA_TINYCRYPT
@@ -282,6 +319,20 @@ choice BOOT_ECDSA_IMPLEMENTATION
 config BOOT_ECDSA_TINYCRYPT
 	bool "Use tinycrypt"
 	select BOOT_USE_TINYCRYPT
+
+config BOOT_ECDSA_MBEDTLS
+	bool "Use mbedTLS"
+	select BOOT_USE_MBEDTLS
+	select MBEDTLS
+	select MBEDTLS_ECP_C if MBEDTLS_BUILTIN
+	select MBEDTLS_ECDSA_C if MBEDTLS_BUILTIN
+	select MBEDTLS_ECP_DP_SECP256R1_ENABLED if MBEDTLS_BUILTIN
+	select MBEDTLS_ASN1_PARSE_C if MBEDTLS_BUILTIN
+	select MBEDTLS_ECP_NIST_OPTIM if MBEDTLS_BUILTIN
+	select MBEDTLS_SHA256 if MBEDTLS_BUILTIN
+	select MBEDTLS_MD if MBEDTLS_BUILTIN
+	select MBEDTLS_ECDH_C if MBEDTLS_BUILTIN && BOOT_ENCRYPT_IMAGE
+	select BOOT_AES_MBEDTLS_DEPENDENCIES if MBEDTLS_BUILTIN && BOOT_ENCRYPT_IMAGE
 
 config BOOT_ECDSA_CC310
 	bool "Use CC310"
@@ -292,15 +343,15 @@ config BOOT_ECDSA_CC310
 	select BOOT_USE_CC310
 
 config BOOT_ECDSA_PSA
-	bool "Use psa cryptoo"
+	bool "Use PSA crypto"
 	select BOOT_USE_PSA_CRYPTO
-	select PSA_CRYPTO_CLIENT
-	select PSA_CRYPTO_C
+	select PSA_CRYPTO
 	select BOOT_IMG_HASH_ALG_SHA256_ALLOW
 	select BOOT_IMG_HASH_ALG_SHA512_ALLOW
 	select BOOT_ECDSA_PSA_DEPENDENCIES
 
 endchoice # Ecdsa implementation
+
 endif
 
 config BOOT_SIGNATURE_TYPE_ED25519
@@ -349,11 +400,8 @@ config BOOT_ED25519_MBEDTLS
 
 config BOOT_ED25519_PSA
 	bool "Use PSA crypto"
-	select MBEDTLS
 	select BOOT_USE_PSA_CRYPTO
-	select PSA_CRYPTO_CLIENT
-	select PSA_CRYPTO_C
-	select MBEDTLS_PSA_CRYPTO_C
+	select PSA_CRYPTO
 	select MBEDTLS_ASN1_PARSE_C if MBEDTLS_BUILTIN
 	select MBEDTLS_ENABLE_HEAP
 	select BOOT_IMG_HASH_ALG_SHA256_ALLOW
@@ -375,6 +423,32 @@ endif
 
 endchoice
 
+if BOOT_USE_PSA_CRYPTO
+
+config BOOT_HAS_PSA_CRYPTO_BACKEND_EXTERNAL
+	bool
+	help
+	  Hidden option which can be set by external modules if an external PSA crypto backend is
+	  supported which does not require mbedTLS.
+
+choice BOOT_PSA_CRYPTO_BACKEND
+	prompt "PSA crypto backend"
+	default BOOT_PSA_CRYPTO_BACKEND_MBEDTLS if !BOOT_HAS_PSA_CRYPTO_BACKEND_EXTERNAL
+	help
+	  Selects which backend should be used for the PSA crypto implementation. Defaults to
+	  mbedTLS if no external library is enabled.
+
+config BOOT_PSA_CRYPTO_BACKEND_EXTERNAL
+	bool "External"
+	depends on BOOT_HAS_PSA_CRYPTO_BACKEND_EXTERNAL
+
+config BOOT_PSA_CRYPTO_BACKEND_MBEDTLS
+	bool "mbedTLS"
+
+endchoice
+
+endif # BOOT_USE_PSA_CRYPTO
+
 config BOOT_BYPASS_KEY_MATCH
 	bool "Do not match TLV key hash against built in key"
 	depends on !BOOT_SIGNATURE_TYPE_NONE
@@ -389,21 +463,47 @@ config BOOT_BYPASS_KEY_MATCH
 	  MCUboot code and boot time.
 
 config BOOT_SIGNATURE_KEY_FILE
-	string "PEM key file"
+	string "PEM key file (or comma-separated list)"
+	depends on !BOOT_SIGNATURE_TYPE_NONE
 	default "root-ec-p256.pem" if BOOT_SIGNATURE_TYPE_ECDSA_P256
 	default "root-ed25519.pem" if BOOT_SIGNATURE_TYPE_ED25519
 	default "root-rsa-3072.pem" if BOOT_SIGNATURE_TYPE_RSA && BOOT_SIGNATURE_TYPE_RSA_LEN=3072
 	default "root-rsa-2048.pem" if BOOT_SIGNATURE_TYPE_RSA && BOOT_SIGNATURE_TYPE_RSA_LEN=2048
 	default ""
+	depends on !BOOT_BUILTIN_KEY
 	help
-	  You can use either absolute or relative path.
-	  In case relative path is used, the build system assumes that it starts
-	  from the directory where the MCUBoot KConfig configuration file is
-	  located. If the key file is not there, the build system uses relative
-	  path that starts from the MCUBoot repository root directory.
-	  The key file will be parsed by imgtool's getpub command and a .c source
-	  with the public key information will be written in a format expected by
-	  MCUboot.
+	  Path to a signing/verification key PEM, or a comma-separated
+	  list of PEMs (e.g. "prod_pub.pem,dev_pub.pem") to embed multiple
+	  verification keys in the bootloader. Only the public-key bytes are
+	  ever embedded in the bootloader image regardless of which form is
+	  passed in.
+
+	  The first entry may be either a keypair PEM or a public-only PEM.
+	  A keypair is required only if the same file is also used with
+	  `imgtool sign`; a public-only PEM is sufficient (and preferred)
+	  when image signing is performed elsewhere with the private half
+	  held under separate custody. When a private key is used, only
+	  the public half is embedded in the bootloader.
+
+	  Subsequent entries (positions past the first) must be public-only
+	  PEMs; the build will fail at CMake time otherwise. This guards the
+	  intended workflow: a development bootloader that accepts both
+	  production-signed images (verified against the prod public key,
+	  whose private half stays under release-team custody) and
+	  development-signed images (verified against the dev public key).
+	  All entries must use the same BOOT_SIGNATURE_TYPE. Multi-key mode
+	  is mutually exclusive with BOOT_HW_KEY, BOOT_BUILTIN_KEY, and
+	  BOOT_BYPASS_KEY_MATCH.
+
+	  Each entry can be an absolute or relative path. Relative paths are
+	  resolved first against APPLICATION_CONFIG_DIR, then against the
+	  MCUboot repository root. Each file is parsed by imgtool's getpub
+	  command and a .c source with the public key information is written
+	  in a format expected by MCUboot.
+
+	  Note: In configuration files, escaped CMake variables can be used to refer to paths
+	  e.g. \${CMAKE_CURRENT_LIST_DIR} will allow referencing a file in that directory, these
+	  will be automatically configured by the build system.
 
 config MCUBOOT_CLEANUP_ARM_CORE
 	bool "Perform core cleanup before chain-load the application"
@@ -434,7 +534,7 @@ config MCUBOOT_INFINITE_LOOP_AFTER_RAM_CLEANUP
 	  Verification option that keeps execution in infinite loop after
 	  RAM cleanup has been performed.
 
-config MBEDTLS_CFG_FILE
+config MBEDTLS_CONFIG_FILE
 	# It might be awkward to define an Mbed TLS header file when TinyCrypt
 	# is used, but the fact is that Mbed TLS' ASN1 parse module is used
 	# also when TinyCrypt is used as crypto backend.
@@ -448,6 +548,11 @@ config BOOT_HW_KEY
 	  in MCUBoot. If enabled the public key is appended to the signed image
 	  and requires the hash of the public key to be provisioned to the device
 	  beforehand.
+
+config BOOT_BUILTIN_KEY
+	bool "Use built-in key for image verification"
+	help
+	  Use built-in key for image verification, otherwise the public key is embedded in MCUBoot.
 
 config BOOT_VALIDATE_SLOT0
 	bool "Validate image in the primary slot on every boot"
@@ -471,7 +576,7 @@ config BOOT_VALIDATE_SLOT0_ONCE
 
 config BOOT_PREFER_SWAP_OFFSET
 	bool "Prefer the newer swap offset algorithm"
-	default y if !$(dt_nodelabel_enabled,scratch_partition) && !SOC_FAMILY_STM32
+	default y if !$(dt_nodelabel_enabled,scratch_partition) && !SOC_FAMILY_ESPRESSIF_ESP32
 	help
 	  If y, the BOOT_IMAGE_UPGRADE_MODE will default to using "offset" instead of "scratch".
 	  This is a separate bool config option, because Kconfig doesn't allow defaults to be
@@ -489,12 +594,26 @@ config BOOT_PREFER_SWAP_MOVE
 	  by swap using offset, but is kept to allow existing projects
 	  to make use of it.
 
-if !SINGLE_APPLICATION_SLOT
 choice BOOT_IMAGE_UPGRADE_MODE
 	prompt "Image upgrade modes"
 	default BOOT_SWAP_USING_OFFSET if BOOT_PREFER_SWAP_OFFSET
 	default BOOT_SWAP_USING_MOVE if BOOT_PREFER_SWAP_MOVE
 	default BOOT_SWAP_USING_SCRATCH
+
+config SINGLE_APPLICATION_SLOT
+	bool "Single slot bootloader"
+	help
+	  Single image area is used for application which means that
+	  uploading a new application overwrites the one that previously
+	  occupied the area.
+
+config SINGLE_APPLICATION_SLOT_RAM_LOAD
+	bool "RAM load for single application slot"
+	help
+	  If y, the image is loaded to RAM and executed from there. For this reason,
+	  the image has to be linked to be executed from RAM. The address that the
+	  image is copied to is specified using the load-addr argument to the
+	  imgtool.py script which writes it to the image header.
 
 config BOOT_SWAP_USING_SCRATCH
 	bool "Swap mode that run with the scratch partition"
@@ -564,8 +683,10 @@ config BOOT_FIRMWARE_LOADER
 
 endchoice
 
+if !SINGLE_APPLICATION_SLOT
+
 config BOOT_DIRECT_XIP_REVERT
-	bool "Enable the revert mechanism in direct-xip mode"
+	bool "Revert mechanism in direct-xip mode"
 	depends on BOOT_DIRECT_XIP
 	help
 	  If y, enables the revert mechanism in direct-xip similar to the one in
@@ -576,7 +697,7 @@ config BOOT_DIRECT_XIP_REVERT
 	  (marked as confirmed in advance) just like in swap mode.
 
 config BOOT_RAM_LOAD_REVERT
-	bool "Enable the revert mechanism in ram-load mode"
+	bool "Revert mechanism in ram-load mode"
 	depends on BOOT_RAM_LOAD
 	help
 	  If y, enables the revert mechanism in ram-load similar to the one in
@@ -608,25 +729,33 @@ config BOOT_SWAP_SAVE_ENCTLV
 
 endif # !SINGLE_APPLICATION_SLOT
 
-config SINGLE_APPLICATION_SLOT_RAM_LOAD
-	bool "RAM load for single application slot"
-	help
-	  If y, the image is loaded to RAM and executed from there. For this reason,
-	  the image has to be linked to be executed from RAM. The address that the
-	  image is copied to is specified using the load-addr argument to the
-	  imgtool.py script which writes it to the image header.
+if BOOT_RAM_LOAD || SINGLE_APPLICATION_SLOT_RAM_LOAD
 
 # Workaround for not being able to have commas in macro arguments
 DT_CHOSEN_Z_SRAM := zephyr,sram
+DT_CHOSEN_MCUBOOT_IMAGE_RAM := mcuboot,image-ram
 
-if BOOT_RAM_LOAD || SINGLE_APPLICATION_SLOT_RAM_LOAD
+config BOOT_MCUBOOT_LACKS_IMAGE_RAM_NODE
+	bool
+	default y if "$(dt_chosen_path,$(DT_CHOSEN_MCUBOOT_IMAGE_RAM))" = ""
+	select DEPRECATED
+	help
+	  If this option is selected, it means that your target does not have an
+	  ``mcuboot,image-ram`` chosen node which points to a RAM location for images to be
+	  loaded to.
+
 config BOOT_IMAGE_EXECUTABLE_RAM_START
-	hex "Boot image executable ram start"
+	hex "Boot image executable ram start" if BOOT_MCUBOOT_LACKS_IMAGE_RAM_NODE
+	default $(dt_chosen_reg_addr_hex,$(DT_CHOSEN_MCUBOOT_IMAGE_RAM)) if \
+		!BOOT_MCUBOOT_LACKS_IMAGE_RAM_NODE
 	default $(dt_chosen_reg_addr_hex,$(DT_CHOSEN_Z_SRAM))
 
 config BOOT_IMAGE_EXECUTABLE_RAM_SIZE
-	int "Boot image executable base size"
+	int "Boot image executable base size" if BOOT_MCUBOOT_LACKS_IMAGE_RAM_NODE
+	default $(dt_chosen_reg_size_int,$(DT_CHOSEN_MCUBOOT_IMAGE_RAM),0) if \
+		!BOOT_MCUBOOT_LACKS_IMAGE_RAM_NODE
 	default $(dt_chosen_reg_size_int,$(DT_CHOSEN_Z_SRAM),0)
+
 endif
 
 config MULTIPLE_EXECUTABLE_RAM_REGIONS
@@ -691,6 +820,22 @@ config BOOT_ENCRYPT_X25519
 	help
 	  Hidden option selecting x25519 encryption.
 
+if BOOT_ENCRYPT_IMAGE
+
+choice BOOT_ENCRYPT_ALG
+	prompt "Algorithm used for image encryption"
+	default BOOT_ENCRYPT_ALG_AES_128
+
+config BOOT_ENCRYPT_ALG_AES_128
+	bool "Use AES-128 for image encryption"
+
+config BOOT_ENCRYPT_ALG_AES_256
+	bool "Use AES-256 for image encryption"
+
+endchoice # BOOT_ENCRYPT_ALG
+
+endif # BOOT_ENCRYPT_IMAGE
+
 if BOOT_ENCRYPT_X25519 && BOOT_USE_PSA_CRYPTO
 
 choice BOOT_HMAC_SHA
@@ -730,12 +875,15 @@ config BOOT_ENCRYPTION_KEY_FILE
 	help
 	  You can use either absolute or relative path.
 	  In case relative path is used, the build system assumes that it starts
-	  from the directory where the MCUBoot KConfig configuration file is
-	  located. If the key file is not there, the build system uses relative
-	  path that starts from the MCUBoot repository root directory.
+	  from the APPLICATION_CONFIG_DIR directory. If the key file is not there, the build
+	  system uses relative path that starts from the MCUBoot repository root directory.
 	  The key file will be parsed by imgtool's getpriv command and a .c source
 	  with the public key information will be written in a format expected by
 	  MCUboot.
+
+	  Note: In configuration files, escaped CMake variables can be used to refer to paths
+	  e.g. \${CMAKE_CURRENT_LIST_DIR} will allow referencing a file in that directory, these
+	  will be automatically configured by the build system.
 
 config BOOT_MAX_IMG_SECTORS_AUTO
 	bool "Calculate maximum sectors automatically"
@@ -879,12 +1027,12 @@ config BOOT_FIH_PROFILE_HIGH
 endchoice
 
 config BOOT_USE_BENCH
-        bool "Enable benchmark code"
-        help
-          If y, adds support for simple benchmarking that can record
-          time intervals between two calls.  The time printed depends
-          on the particular Zephyr target, and is generally ticks of a
-          specific board-specific timer.
+	bool "Benchmark code"
+	help
+	  If y, adds support for simple benchmarking that can record
+	  time intervals between two calls.  The time printed depends
+	  on the particular Zephyr target, and is generally ticks of a
+	  specific board-specific timer.
 
 module = MCUBOOT
 module-str = MCUBoot bootloader
@@ -902,38 +1050,25 @@ config MCUBOOT_LOG_THREAD_STACK_SIZE
 	help
 	  Set the internal stack size for MCUBoot log processing thread.
 
-menu "USB DFU"
-
-choice BOOT_USB_DFU
-	prompt "USB DFU"
-	default BOOT_USB_DFU_NO
-
-config BOOT_USB_DFU_NO
-	prompt "Disabled"
-
-config BOOT_USB_DFU_WAIT
-	bool "Wait for a prescribed duration to see if USB DFU is invoked"
+menuconfig BOOT_USB_DFU
+	bool "USB DFU"
 	select USB_DEVICE_STACK
 	select USB_DFU_CLASS
 	select IMG_MANAGER
 	select STREAM_FLASH
 	select MULTITHREADING
+	help
+	  If y, enable USB DFU support in the bootloader. Select one or more of
+	  the entrance methods below to control when USB DFU mode is entered.
+
+if BOOT_USB_DFU
+
+config BOOT_USB_DFU_WAIT
+	bool "Wait for a prescribed duration to see if USB DFU is invoked"
 	help
 	  If y, MCUboot waits for a prescribed duration of time to allow
 	  for USB DFU to be invoked. Please note DFU always updates the
 	  slot1 image.
-
-config BOOT_USB_DFU_GPIO
-	bool "Use GPIO to detect whether to trigger DFU mode"
-	select USB_DEVICE_STACK
-	select USB_DFU_CLASS
-	select IMG_MANAGER
-	select STREAM_FLASH
-	select MULTITHREADING
-	help
-	  If y, MCUboot uses GPIO to detect whether to invoke USB DFU.
-
-endchoice
 
 config BOOT_USB_DFU_WAIT_DELAY_MS
 	int "USB DFU wait duration"
@@ -942,33 +1077,34 @@ config BOOT_USB_DFU_WAIT_DELAY_MS
 	help
 	  Milliseconds to wait for USB DFU to be invoked.
 
-if BOOT_USB_DFU_GPIO
+config BOOT_USB_DFU_GPIO
+	bool "Use GPIO to detect whether to trigger DFU mode"
+	help
+	  If y, MCUboot uses GPIO to detect whether to invoke USB DFU.
 
 config BOOT_USB_DFU_DETECT_DELAY
 	int "Serial detect pin detection delay time [ms]"
+	depends on BOOT_USB_DFU_GPIO
 	default 0
 	help
 	  Used to prevent the bootloader from loading on button press.
 	  Useful for powering on when using the same button as
 	  the one used to place the device in bootloader mode.
 
-endif # BOOT_USB_DFU_GPIO
-
 config BOOT_USB_DFU_NO_APPLICATION
 	bool "Stay in bootloader if no application"
-	depends on !BOOT_USB_DFU_NO
 	help
 	  Allows for entering USB DFU recovery mode if there is no bootable
 	  application that the bootloader can jump to.
 
-endmenu
+endif # BOOT_USB_DFU
 
 rsource "Kconfig.serial_recovery"
 
 config MCUBOOT_INDICATION_LED
 	bool "Turns on LED indication when device is in DFU"
 	select GPIO
-	depends on MCUBOOT_SERIAL || !BOOT_USB_DFU_NO
+	depends on MCUBOOT_SERIAL || BOOT_USB_DFU
 	help
 	  Device device activates the LED while in bootloader mode.
 	  mcuboot-led0 alias must be set in the device's .dts
@@ -994,20 +1130,11 @@ config UPDATEABLE_IMAGE_NUMBER
 config BOOT_VERSION_CMP_USE_BUILD_NUMBER
 	bool "Use build number while comparing image version"
 	depends on (UPDATEABLE_IMAGE_NUMBER > 1) || BOOT_DIRECT_XIP || \
-		   BOOT_RAM_LOAD || MCUBOOT_DOWNGRADE_PREVENTION
+			   BOOT_RAM_LOAD || MCUBOOT_DOWNGRADE_PREVENTION
 	help
 	  By default, the image version comparison relies only on version major,
 	  minor and revision. Enable this option to take into account the build
 	  number as well.
-
-config BOOT_VERSION_CMP_USE_SLOT_NUMBER
-	bool "Use slot number while comparing image version"
-	depends on (UPDATEABLE_IMAGE_NUMBER > 1) || BOOT_DIRECT_XIP || \
-		   BOOT_RAM_LOAD || MCUBOOT_DOWNGRADE_PREVENTION
-	help
-	  By default, the image slot comparison relies only on active slot.
-	  Enable this option to take into account the specified slot number
-	  instead.
 
 choice BOOT_DOWNGRADE_PREVENTION_CHOICE
 	prompt "Downgrade prevention"
@@ -1023,17 +1150,6 @@ config MCUBOOT_DOWNGRADE_PREVENTION
 	  only protects against some attacks against version downgrades (for
 	  example, a JTAG could be used to write an older version).
 
-config MCUBOOT_DOWNGRADE_PREVENTION_SECURITY_COUNTER
-	bool "Use image security counter instead of version number"
-	depends on MCUBOOT_DOWNGRADE_PREVENTION
-	depends on (BOOT_SWAP_USING_MOVE || BOOT_SWAP_USING_SCRATCH || BOOT_SWAP_USING_OFFSET)
-	help
-       Security counter is used for version eligibility check instead of pure
-       version.  When this option is set, any upgrade must have greater or
-       equal security counter value.
-       Because of the acceptance of equal values it allows for software
-       downgrades to some extent.
-
 config MCUBOOT_HW_DOWNGRADE_PREVENTION
 	bool "HW based downgrade prevention"
 	help
@@ -1044,28 +1160,53 @@ config MCUBOOT_HW_DOWNGRADE_PREVENTION
 
 endchoice
 
-config BOOT_WATCHDOG_FEED
-	bool "Feed the watchdog while doing swap"
-	default y if WATCHDOG
-	default y if SOC_FAMILY_NORDIC_NRF
-	imply BOOT_WATCHDOG_FEED_NRFX_WDT if SOC_FAMILY_NORDIC_NRF
+config MCUBOOT_DOWNGRADE_PREVENTION_SECURITY_COUNTER
+	bool "Use image security counter instead of version number"
+	depends on MCUBOOT_DOWNGRADE_PREVENTION
+	depends on (BOOT_SWAP_USING_MOVE || BOOT_SWAP_USING_SCRATCH || BOOT_SWAP_USING_OFFSET)
 	help
-	  Enables implementation of MCUBOOT_WATCHDOG_FEED() macro which is
-	  used to feed watchdog while doing time consuming operations.
+	  Security counter is used for version eligibility check instead of pure
+	  version.  When this option is set, any upgrade must have greater or
+	  equal security counter value.
+	  Because of the acceptance of equal values it allows for software
+	  downgrades to some extent.
 
-config BOOT_WATCHDOG_FEED_NRFX_WDT
-	bool "Feed the watchdog using NRFX WDT directly"
-	depends on SOC_FAMILY_NORDIC_NRF
-	# for nRF nrfx based implementation is available
-	imply NRFX_WDT
-	imply NRFX_WDT0
-	imply NRFX_WDT1
-	imply NRFX_WDT30
-	imply NRFX_WDT31
-	imply NRFX_WDT010
+config MCUBOOT_HW_DOWNGRADE_PREVENTION_COUNTER_LIMITED
+	bool "HW based downgrade prevention counter has limited number of updates"
+	depends on MCUBOOT_HW_DOWNGRADE_PREVENTION
+	help
+	  When this option is set, the hardware downgrade prevention counter
+	  has limited number of updates. This option will enable checking
+	  if it is possible to update the counter before performing
+	  the upgrade. If an update package contains a security counter
+	  value as a TLV but it is not possible to update the counter,
+	  the update will be rejected.
+
+config MCUBOOT_HW_DOWNGRADE_PREVENTION_LOCK
+	bool "Lock updates of HW based downgrade prevention counter before boot"
+	depends on MCUBOOT_HW_DOWNGRADE_PREVENTION
+	help
+	  When this option is set, the hardware downgrade prevention counter
+	  updates are locked before booting the application.
+	  This means that after booting the application it is not possible to
+	  update the counter until a reboot.
+	  This prevents the application from accidental updates of the counter,
+	  that may invalidate the currently running image.
+
+config MCUBOOT_UUID_VID
+	bool "Expect vendor unique identifier in image's TLV"
+	help
+	  Provide a vendor identification scheme to prevent processing images
+	  generated by a different vendor.
+
+config MCUBOOT_UUID_CID
+	bool "Expect image class unique identifier in image's TLV"
+	help
+	  Provide an image class identification scheme to prevent processing
+	  images for a different CPU or device produced by the same vendor.
 
 config BOOT_IMAGE_ACCESS_HOOKS
-	bool "Enable hooks for overriding MCUboot's native routines"
+	bool "Hooks for overriding MCUboot's native routines"
 	help
 	  Allow to provide procedures for override or extend native
 	  MCUboot's routines required for access the image data and the image
@@ -1073,21 +1214,21 @@ config BOOT_IMAGE_ACCESS_HOOKS
 	  files to the build.
 
 config BOOT_GO_HOOKS
-	bool "Enable hooks for overriding MCUBOOT's boot_go routine"
+	bool "Hooks for overriding MCUBOOT's boot_go routine"
 	help
 	  Allow to provide procedures for override or extend native
 	  MCUboot's boot_go routine. It is up to the project customization to
 	  add required source files to the build.
 
 config BOOT_FLASH_AREA_HOOKS
-	bool "Enable hooks for overriding MCUboot's flash area routines"
+	bool "Hooks for overriding MCUboot's flash area routines"
 	help
 	  Allow to provide procedures for override or extend native
 	  MCUboot's flash area routines. It is up to the project customization to
 	  add required source files to the build.
 
 config MCUBOOT_ACTION_HOOKS
-	bool "Enable hooks for responding to MCUboot status changes"
+	bool "Hooks for responding to MCUboot status changes"
 	help
 	  This will call a handler when the MCUboot status changes which allows
 	  for some level of user feedback, for instance to change LED status to
@@ -1095,6 +1236,13 @@ config MCUBOOT_ACTION_HOOKS
 	  'void mcuboot_status_change(mcuboot_status_type_t status)' where
 	  'mcuboot_status_type_t' is listed in
 	  boot/bootutil/include/bootutil/mcuboot_status.h
+
+config FIND_NEXT_SLOT_HOOKS
+	bool "Hooks for finding the next active slot"
+	help
+	  Allow to provide procedures for override or extend the search policy
+	  for the best slot to boot in the Direct XIP mode.
+	  By default a slot with the highest version is selected.
 
 config BOOT_DISABLE_CACHES
 	bool "Disable I/D caches before chain-loading application"
@@ -1121,7 +1269,19 @@ config MCUBOOT_BOOT_BANNER
 	    *** Using Zephyr OS build v3.6.0-2607-gd0be2010c31f ***
 
 config BOOT_BANNER_STRING
-        default "Using Zephyr OS build" if MCUBOOT_BOOT_BANNER
+	default "Using Zephyr OS build" if MCUBOOT_BOOT_BANNER
+
+config MCUBOOT_USE_TLV_ALLOW_LIST
+	bool "Check unprotected TLVs against allow list"
+	default y
+	help
+	  Every unprotected TLV will be checked against list of allowed TLVs,
+	  which is compiled in and depends on configuration; an image that
+	  contain TLV not present on the list will be automaticaly rejected.
+	  This is additional check, as MCUboot will not be parsing TLVs it
+	  has not been compiled to parse in the first place.
+	  Disabling this option will cut down MCUboot size.
+	  The Kconfig controlls MCUboot configuration option MCUBOOT_USE_TLV_ALLOW_LIST.
 
 config BOOT_DECOMPRESSION_SUPPORT
 	bool
@@ -1189,6 +1349,60 @@ config MCUBOOT_STORAGE_MINIMAL_SCRAMBLE
 	  Depending on type of device this may be done by erase of minimal
 	  number of pages or overwrite of part of image.
 
+menu "Watchdog configuration"
+
+config BOOT_WATCHDOG_SETUP_AT_BOOT
+	bool "Setup watchdog on boot"
+	depends on WATCHDOG
+	default y
+	help
+	  Will set the watchdog up at boot, if this option is enabled and
+	  CONFIG_BOOT_WATCHDOG_INSTALL_TIMEOUT_AT_BOOT is disabled then this is non-compliant
+	  with the Zephyr watchdog driver interface as no timeouts will be installed but is
+	  left as an option as MCUboot has seemingly done this for 6 years prior and it might be
+	  used in configurations where the watchdog is enabled by other images or directly in
+	  hardware.
+
+	  Note that the in-built watchdog functionality in MCUboot can be replaced with custom
+	  logic by overriding the weak symbol functions `mcuboot_watchdog_setup` and
+	  `mcuboot_watchdog_feed`.
+
+config BOOT_WATCHDOG_INSTALL_TIMEOUT_AT_BOOT
+	bool "Install watchdog timeout on boot"
+	depends on BOOT_WATCHDOG_SETUP_AT_BOOT
+	default y
+	help
+	  Will set the watchdog up at boot and install a timeout, note that this watchdog will
+	  then need to be continuously fed from the application once it is booted. The Zephyr
+	  watchdog driver might need special configuration or re-init in the application to
+	  allow the application to feed it.
+
+config BOOT_WATCHDOG_TIMEOUT_MS
+	int "Watchdog timeout (ms)"
+	depends on BOOT_WATCHDOG_INSTALL_TIMEOUT_AT_BOOT
+	default 300000
+	help
+	  Will setup a timeout for this duration when MCUboot starts. This defaults to a 5 minute
+	  timeout, which is sufficient for most devices to be able to swap an image an boot the
+	  new application which can initialise itself and feed the watchdog before it times out.
+
+config BOOT_WATCHDOG_FEED
+	bool "Feed the watchdog while doing swap"
+	default y if WATCHDOG
+	default y if SOC_FAMILY_NORDIC_NRF
+	imply BOOT_WATCHDOG_FEED_NRFX_WDT if SOC_FAMILY_NORDIC_NRF
+	help
+	  Enables implementation of MCUBOOT_WATCHDOG_FEED() macro which is
+	  used to feed watchdog while doing time consuming operations.
+
+config BOOT_WATCHDOG_FEED_NRFX_WDT
+	bool "Feed the watchdog using NRFX WDT directly"
+	depends on SOC_FAMILY_NORDIC_NRF
+	# for nRF nrfx based implementation is available
+	imply NRFX_WDT
+
+endmenu # "Watchdog configuration"
+
 menu "Defaults"
 	# Items in this menu should not be manually set. These options are for modules/sysbuild to
 	# set as defaults to allow MCUboot's default configuration to be set, but still allow it
@@ -1205,14 +1419,66 @@ config BOOT_FIH_PROFILE_DEFAULT_HIGH
 
 endmenu
 
+config MCUBOOT_CHECK_HEADER_LOAD_ADDRESS
+	bool "Use load address to verify application is in proper slot"
+	help
+	  The bootloader will use the load address, from the image header,
+	  to verify that binary is in slot designated for its execution.
+	  When not selected reset vector, read from image, is used for
+	  the same purpose.
+
+config MCUBOOT_VERIFY_IMG_ADDRESS
+	bool "Verify reset address of image in secondary slot [DEPRECATED]"
+	select DEPRECATED
+	depends on UPDATEABLE_IMAGE_NUMBER > 1
+	depends on !BOOT_ENCRYPT_IMAGE
+	depends on ARM
+	default y if BOOT_UPGRADE_ONLY
+	help
+	  This option is deprecated, please use MCUBOOT_CHECK_HEADER_LOAD_ADDRESS
+	  instead.
+	  Verify that the reset address in the image located in the secondary slot
+	  is contained within the corresponding primary slot. This is recommended
+	  if swapping is not used (that is, BOOT_UPGRADE_ONLY is set). If a user
+	  incorrectly uploads an update for image 1 to image 0's secondary slot
+	  MCUboot will overwrite image 0's primary slot with this image even
+	  though it will not boot. If swapping is enabled this will be handled
+	  since the image will not confirm itself. If, however, swapping is not
+	  enabled then the only mitigation is serial recovery. This feature can
+	  also be useful when BOOT_DIRECT_XIP is enabled, to ensure that the image
+	  linked at the correct address is loaded.
+
+config MCUBOOT_LOGICAL_SECTOR_SIZE
+	hex "Size of a logical sector [EXPERIMENTAL]"
+	default 0x0
+	help
+	  Set to 0x0 to use hardware sectors. Any other value here should be aligned to hardware
+	  sectors in size and alignment, and must be a power of two. A build time assertion
+	  rejects sizes that are not, as offsets are rounded by masking rather than by division.
+
+config MCUBOOT_VERIFY_LOGICAL_SECTORS
+	bool "Validate logical sector layout"
+	depends on MCUBOOT_LOGICAL_SECTOR_SIZE != 0x0
+	help
+	  Validation of logical sector size against hardware constraints. Should be used to
+	  validate compile-time configuration against run-time system.
+
+config MCUBOOT_LOGICAL_SECTOR_SIZE_EXPERIMENTAL
+	bool
+	default y if MCUBOOT_LOGICAL_SECTOR_SIZE != 0x0
+	select EXPERIMENTAL
+	help
+	  Indicates that MCUboot's logical sector size feature has been enabled, this feature
+	  is currently experimental.
+
 config MCUBOOT_DEVICE_SETTINGS
 	# Hidden selector for device-specific settings
 	bool
 	default y
-        # CPU options
+	# CPU options
 	select MCUBOOT_DEVICE_CPU_CORTEX_M0 if CPU_CORTEX_M0
-        # Enable flash page layout if available
-	select FLASH_PAGE_LAYOUT if FLASH_HAS_PAGE_LAYOUT
+	# Enable flash page layout if available
+	select FLASH_PAGE_LAYOUT if FLASH_HAS_PAGE_LAYOUT && (MCUBOOT_LOGICAL_SECTOR_SIZE = 0x0 || MCUBOOT_VERIFY_LOGICAL_SECTORS)
 	# Enable flash_map module as flash I/O back-end
 	select FLASH_MAP
 
@@ -1249,23 +1515,5 @@ config USB_DEVICE_PRODUCT
 # use MCUboot's own log configuration
 config MCUBOOT_BOOTUTIL_LIB_OWN_LOG
 	bool
-
-config MCUBOOT_VERIFY_IMG_ADDRESS
-	bool "Verify reset address of image in secondary slot"
-	depends on UPDATEABLE_IMAGE_NUMBER > 1
-	depends on !BOOT_ENCRYPT_IMAGE
-	depends on ARM
-	default y if BOOT_UPGRADE_ONLY
-	help
-	  Verify that the reset address in the image located in the secondary slot
-	  is contained within the corresponding primary slot. This is recommended
-	  if swapping is not used (that is, BOOT_UPGRADE_ONLY is set). If a user
-	  incorrectly uploads an update for image 1 to image 0's secondary slot
-	  MCUboot will overwrite image 0's primary slot with this image even
-	  though it will not boot. If swapping is enabled this will be handled
-	  since the image will not confirm itself. If, however, swapping is not
-	  enabled then the only mitigation is serial recovery. This feature can
-	  also be useful when BOOT_DIRECT_XIP is enabled, to ensure that the image
-	  linked at the correct address is loaded.
 
 source "Kconfig.zephyr"

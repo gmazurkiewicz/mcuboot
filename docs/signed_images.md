@@ -33,6 +33,18 @@ be useful when you want to prevent production units from booting
 development images, but want development units to be able to boot
 both production images and development images.
 
+On Zephyr, `CONFIG_BOOT_SIGNATURE_KEY_FILE` accepts a comma-separated
+list of PEMs. Only the public-key bytes are embedded regardless of which
+form is passed in. The first entry may be a keypair PEM (needed only if
+the same file is also fed to `imgtool sign`) or a public-only PEM
+(preferred when signing happens elsewhere); subsequent entries must be
+public-only. The intended use is to separate signing custody (a
+production private key, held only by a release team) from verification
+custody (the production public key, embedded in development bootloaders
+so dev units can boot prod-signed images). See
+[readme-zephyr.md](readme-zephyr.md) for the threat-model table and a
+worked example.
+
 For an alternative solution when the public key(s) doesn't need to be
 included in the bootloader, see the [design](design.md) document.
 
@@ -56,6 +68,16 @@ Now the public key is in file called image_sign_pub.der.
 For ECDSA256 these commands are similar.
 openssl ecparam -name prime256v1 -genkey -noout -out image_sign.pem
 openssl ec -in image_sign.pem -pubout -outform DER -out image_sign_pub.der
+
+Note that the bootloader build does not require the private key: the
+exported public-key PEM (produced above, or via
+`imgtool getpub -k image_sign.pem -e pem`) is itself a valid input to
+`imgtool getpub`, and can be used as the
+`CONFIG_BOOT_SIGNATURE_KEY_FILE` setting for a Zephyr-based bootloader
+build. This supports a development workflow
+in which the production signing team releases only the public key,
+and the private key is never present on developer workstations.
+Running `imgtool sign` requires the private key.
 
 ## Creating a key package
 

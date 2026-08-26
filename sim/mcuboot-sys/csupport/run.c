@@ -15,7 +15,12 @@
 #include "bootsim.h"
 
 #ifdef MCUBOOT_ENCRYPT_RSA
+#include "bootutil/crypto/common.h"
+#if MCUBOOT_MBEDTLS_CRYPTO_IN_PRIVATE_SUBDIR
+#include "mbedtls/private/rsa.h"
+#else
 #include "mbedtls/rsa.h"
+#endif
 #include "mbedtls/asn1.h"
 #endif
 
@@ -25,7 +30,6 @@
 
 #define BOOT_LOG_LEVEL BOOT_LOG_LEVEL_ERROR
 #include <bootutil/bootutil_log.h>
-#include "bootutil/crypto/common.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -254,7 +258,8 @@ int invoke_boot_go(struct sim_context *ctx, struct area_desc *adesc,
 #if defined(MCUBOOT_SIGN_RSA) || \
     (defined(MCUBOOT_SIGN_EC256) && defined(MCUBOOT_USE_MBED_TLS)) ||\
     (defined(MCUBOOT_ENCRYPT_EC256) && defined(MCUBOOT_USE_MBED_TLS)) ||\
-    (defined(MCUBOOT_ENCRYPT_X25519) && defined(MCUBOOT_USE_MBED_TLS))
+    (defined(MCUBOOT_ENCRYPT_X25519) && defined(MCUBOOT_USE_MBED_TLS)) ||\
+    defined(MCUBOOT_USE_CUSTOM_CRYPTO)
     mbedtls_platform_set_calloc_free(calloc, free);
 #endif
 
@@ -264,7 +269,7 @@ int invoke_boot_go(struct sim_context *ctx, struct area_desc *adesc,
     sim_set_context(ctx);
 
     if (setjmp(ctx->boot_jmpbuf) == 0) {
-        boot_state_clear(state);
+        boot_state_init(state);
 
 #if BOOT_IMAGE_NUMBER > 1
         if (image_id >= 0) {
@@ -276,12 +281,14 @@ int invoke_boot_go(struct sim_context *ctx, struct area_desc *adesc,
 #endif /* BOOT_IMAGE_NUMBER > 1 */
 
         res = context_boot_go(state, rsp);
+        boot_state_clear(state);
         sim_reset_flash_areas();
         sim_reset_context();
         free(state);
         /* printf("boot_go off: %d (0x%08x)\n", res, rsp->br_image_off); */
         return res;
     } else {
+        boot_state_clear(state);
         sim_reset_flash_areas();
         sim_reset_context();
         free(state);
@@ -300,7 +307,8 @@ int invoke_boot_load_image_from_flash_to_sram(struct sim_context *ctx, struct ar
 #if defined(MCUBOOT_SIGN_RSA) || \
     (defined(MCUBOOT_SIGN_EC256) && defined(MCUBOOT_USE_MBED_TLS)) ||\
     (defined(MCUBOOT_ENCRYPT_EC256) && defined(MCUBOOT_USE_MBED_TLS)) ||\
-    (defined(MCUBOOT_ENCRYPT_X25519) && defined(MCUBOOT_USE_MBED_TLS))
+    (defined(MCUBOOT_ENCRYPT_X25519) && defined(MCUBOOT_USE_MBED_TLS)) ||\
+    defined(MCUBOOT_USE_CUSTOM_CRYPTO)
     mbedtls_platform_set_calloc_free(calloc, free);
 #endif
 
@@ -308,7 +316,7 @@ int invoke_boot_load_image_from_flash_to_sram(struct sim_context *ctx, struct ar
 
     sim_set_flash_areas(adesc);
     sim_set_context(ctx);
-    boot_state_clear(state);
+    boot_state_init(state);
 
     res = flash_area_open(FLASH_AREA_IMAGE_PRIMARY(0), &fa_p);
     if (res != 0) {
@@ -335,6 +343,7 @@ int invoke_boot_load_image_from_flash_to_sram(struct sim_context *ctx, struct ar
     }
 
     flash_area_close(fa_p);
+    boot_state_clear(state);
     sim_reset_flash_areas();
     sim_reset_context();
     free(state);
@@ -601,3 +610,17 @@ uint32_t boot_magic_sz(void)
 {
     return BOOT_MAGIC_ALIGN_SIZE;
 }
+
+#if !MCUBOOT_SWAP_USING_SCRATCH
+/*
+ * bootutil_area.c only compiles boot_scratch_trailer_sz() for
+ * swap-using-scratch builds, but the simulator declares it unconditionally so
+ * that the Rust side links in every configuration.  The Rust side only calls
+ * it when swap-using-scratch is active.
+ */
+uint32_t boot_scratch_trailer_sz(uint32_t min_write_sz)
+{
+    (void)min_write_sz;
+    return 0;
+}
+#endif

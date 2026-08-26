@@ -350,7 +350,7 @@ boot_write_trailer(const struct flash_area *fap, uint32_t off,
     uint32_t align;
     int rc;
 
-    BOOT_LOG_DBG("boot_write_trailer: for %p at %d, size = %d",
+    BOOT_LOG_DBG("boot_write_trailer: for %p at %" PRIu32 ", size = %d",
                  fap, off, inlen);
 
     align = flash_area_align(fap);
@@ -444,8 +444,8 @@ boot_swap_type_multi(int image_index)
     rc = boot_read_swap_state_by_id(FLASH_AREA_IMAGE_SECONDARY(image_index),
                                     &secondary_slot);
     if (rc == BOOT_EFLASH) {
-        BOOT_LOG_INF("Secondary image of image pair (%d.) "
-                     "is unreachable. Treat it as empty", image_index);
+        BOOT_LOG_INF("Secondary image of image pair (%d) is unreachable. Treat it as empty",
+                     image_index);
         secondary_slot.magic = BOOT_MAGIC_UNSET;
         secondary_slot.swap_type = BOOT_SWAP_TYPE_NONE;
         secondary_slot.copy_done = BOOT_FLAG_UNSET;
@@ -622,7 +622,7 @@ boot_set_next(const struct flash_area *fa, bool active, bool confirm)
         if (rc != 0) {
             break;
         }
-        /* Pass */
+        /* fallthrough */
 
     case BOOT_MAGIC_GOOD:
         if (confirm) {
@@ -791,6 +791,7 @@ boot_image_load_header(const struct flash_area *fa_p,
     }
 
     if (!boot_u32_safe_add(&size, hdr->ih_img_size, hdr->ih_hdr_size) ||
+        !boot_u32_safe_add(&size, size, hdr->ih_protect_tlv_size) ||
         size >= flash_area_get_size(fa_p)) {
         BOOT_LOG_ERR("Image size bigger than designated area: %lu > %lu",
                      (unsigned long)size, (unsigned long)flash_area_get_size(fa_p));

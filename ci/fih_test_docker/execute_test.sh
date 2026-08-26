@@ -1,6 +1,6 @@
 #!/bin/bash -x
 
-# Copyright (c) 2020-2023 Arm Limited
+# Copyright (c) 2020-2025 Arm Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,13 @@
 set -e
 
 source $(dirname "$0")/paths.sh
+
+# Activate Python virtual environment
+source $WORK_PATH/../.venv/bin/activate
+
+# Required for git am to apply patches under TF-M
+git config --global user.email "docker@fih-test.com"
+git config --global user.name "docker fih-test"
 
 SKIP_SIZE=$1
 BUILD_TYPE=$2
@@ -37,6 +44,7 @@ cmake -S $TFM_TESTS_PATH/tests_reg/spe \
     -B $TFM_SPE_BUILD_PATH \
     -DTFM_PLATFORM=arm/mps2/an521 \
     -DCONFIG_TFM_SOURCE_PATH=$TFM_PATH \
+    -DTFM_EXTRAS_REPO_PATH=$TFM_EXTRAS_PATH \
     -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
     -DTFM_TOOLCHAIN_FILE=$TFM_PATH/toolchain_GNUARM.cmake \
     -DTEST_S=ON \

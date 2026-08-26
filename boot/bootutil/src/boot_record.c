@@ -24,6 +24,9 @@
 
 #include "mcuboot_config/mcuboot_config.h"
 #include "bootutil/crypto/sha.h"
+#ifdef MCUBOOT_HW_ROLLBACK_PROT
+#include "bootutil/security_cnt.h"
+#endif
 
 #if defined(MCUBOOT_MEASURED_BOOT) || defined(MCUBOOT_DATA_SHARING)
 #include "bootutil/boot_record.h"
@@ -176,8 +179,11 @@ boot_save_boot_status(uint8_t sw_module,
             boot_record_found = true;
 
         } else if (type == EXPECTED_HASH_TLV) {
-            /* Get the image's hash value from the manifest section. */
-            if (len > sizeof(image_hash)) {
+            /* Get the image's hash value from the manifest section. The
+             * whole buffer is copied into the boot record below, so the
+             * TLV must fill it exactly.
+             */
+            if (len != sizeof(image_hash)) {
                 return -1;
             }
             rc = flash_area_read(fap, offset, image_hash, len);
@@ -242,6 +248,10 @@ int boot_save_shared_data(const struct image_header *hdr, const struct flash_are
     int rc;
 #if !defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
     uint8_t image = 0;
+#ifdef MCUBOOT_HW_ROLLBACK_PROT
+    uint32_t security_cnt;
+    FIH_DECLARE(fih_rc, FIH_FAILURE);
+#endif
 #endif
 
 #if defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
@@ -346,14 +356,32 @@ int boot_save_shared_data(const struct image_header *hdr, const struct flash_are
     }
 #endif
 
+#if !defined(MCUBOOT_SINGLE_APPLICATION_SLOT) && defined(MCUBOOT_HW_ROLLBACK_PROT)
+    for (image = 0; image < BOOT_IMAGE_NUMBER && !rc; image++) {
+        FIH_CALL(boot_nv_security_counter_get, fih_rc, image, &security_cnt);
+        if (FIH_NOT_EQ(fih_rc, FIH_SUCCESS)) {
+            /* Some platforms expose only one NV counter; skip other image indices. */
+            continue;
+        }
+
+        rc = boot_add_data_to_shared_area(TLV_MAJOR_BLINFO,
+                                          BLINFO_SECURITY_COUNTER_IMAGE_0 + image,
+                                          sizeof(security_cnt),
+                                          (void *)&security_cnt);
+    }
+#endif /* !defined(MCUBOOT_SINGLE_APPLICATION_SLOT) && defined(MCUBOOT_HW_ROLLBACK_PROT) */
+
 #if !defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
+    image = 0;
     while (image < BOOT_IMAGE_NUMBER && !rc) {
         if (max_app_sizes[image].calculated == true) {
             rc = boot_add_data_to_shared_area(TLV_MAJOR_BLINFO,
                                               (BLINFO_MAX_APPLICATION_SIZE + image),
                                               sizeof(max_app_sizes[image].max_size),
                                               (void *)&max_app_sizes[image].max_size);
-
+            if (!rc) {
+                break;
+            }
         }
 
         ++image;

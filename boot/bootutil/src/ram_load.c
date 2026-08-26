@@ -41,6 +41,8 @@
 
 #include "mcuboot_config/mcuboot_config.h"
 
+#ifdef MCUBOOT_RAM_LOAD
+
 BOOT_LOG_MODULE_DECLARE(mcuboot);
 
 #ifndef MULTIPLE_EXECUTABLE_RAM_REGIONS
@@ -155,7 +157,7 @@ boot_decrypt_and_copy_image_to_sram(struct boot_loader_state *state,
     }
 
     /* if rc > 0 then the key has already been loaded */
-    if (rc == 0 && boot_enc_set_key(BOOT_CURR_ENC(state), slot, &bs)) {
+    if (rc == 0 && boot_enc_set_key(BOOT_CURR_ENC_SLOT(state, slot), bs.enckey[slot])) {
         goto done;
     }
 
@@ -176,7 +178,7 @@ boot_decrypt_and_copy_image_to_sram(struct boot_loader_state *state,
              * Part of the chunk is encrypted payload */
             blk_sz = tlv_off - (bytes_copied);
         }
-        boot_enc_decrypt(BOOT_CURR_ENC(state), slot,
+        boot_enc_decrypt(BOOT_CURR_ENC_SLOT(state, slot),
                 (bytes_copied + idx) - hdr->ih_hdr_size, blk_sz,
                 blk_off, cur_dst);
         bytes_copied += chunk_sz;
@@ -274,7 +276,7 @@ boot_check_ram_load_overlapping(struct boot_loader_state *state)
     end_a = start_a + state->slot_usage[image_id_to_check].img_sz;
 
     for (i = 0; i < BOOT_IMAGE_NUMBER; i++) {
-        if (state->slot_usage[i].active_slot == NO_ACTIVE_SLOT
+        if (state->slot_usage[i].active_slot == BOOT_SLOT_NONE
             || i == image_id_to_check) {
             continue;
         }
@@ -433,3 +435,5 @@ int boot_load_image_from_flash_to_sram(struct boot_loader_state *state,
 
     return boot_load_image_to_sram(state);
 }
+
+#endif

@@ -58,6 +58,17 @@
 /* #define MCUBOOT_OVERWRITE_ONLY_FAST */
 #endif
 
+/* Define to enable the swap-using-offset code path. (CURRENTLY UNSUPPORTED!)*/
+#if defined(CONFIG_ESP_BOOT_SWAP_USING_OFFSET)
+#define MCUBOOT_SWAP_USING_OFFSET 1
+#endif
+
+/* Define to enable the single-application-slot code path. (CURRENTLY UNSUPPORTED!).*/
+#if defined(CONFIG_ESP_SINGLE_APPLICATION_SLOT)
+#define MCUBOOT_SINGLE_APPLICATION_SLOT 1
+#define CONFIG_ESP_IMAGE_NUMBER    1
+#endif
+
 /* Define to enable the direct-xip code path (CURRENTLY UNSUPPORTED!). */
 #if defined(CONFIG_ESP_BOOT_DIRECT_XIP)
 #define MCUBOOT_DIRECT_XIP
@@ -75,7 +86,9 @@
  */
 #if !defined(CONFIG_ESP_BOOT_SWAP_USING_SCRATCH) && \
     !defined(CONFIG_ESP_BOOT_SWAP_USING_MOVE) && \
+    !defined(CONFIG_ESP_BOOT_SWAP_USING_OFFSET) && \
     !defined(CONFIG_ESP_BOOT_UPGRADE_ONLY) && \
+    !defined(CONFIG_ESP_SINGLE_APPLICATION_SLOT) && \
     !defined(CONFIG_ESP_BOOT_DIRECT_XIP) && \
     !defined(CONFIG_ESP_BOOT_RAM_LOAD)
 #define CONFIG_ESP_BOOT_SWAP_USING_SCRATCH
@@ -127,6 +140,9 @@
 #define MCUBOOT_USE_FLASH_AREA_GET_SECTORS
 
 #define MCUBOOT_DEV_WITH_ERASE
+
+/* Enable non-protected TLV check against allow list */
+#define MCUBOOT_USE_TLV_ALLOW_LIST 1
 
 /* Default maximum number of flash sectors per image slot; change
  * as desirable. */

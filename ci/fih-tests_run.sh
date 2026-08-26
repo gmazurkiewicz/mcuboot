@@ -1,6 +1,6 @@
 #!/bin/bash -x
 
-# Copyright (c) 2020-2024 Arm Limited
+# Copyright (c) 2020-2025 Arm Limited
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,19 +16,24 @@
 
 set -e
 
-source $(dirname "$0")/fih-tests_version.sh
+source $(dirname "$0")/fih-tests_config.sh
 
 # Note that we are pulling from a github mirror of these repos, not direct upstream.  If the sha
 # checked out below changes, the mirrors might need to be updated.
 pushd ..
-git clone https://github.com/mcu-tools/trusted-firmware-m
+git clone https://github.com/TrustedFirmware-M/trusted-firmware-m
 pushd trusted-firmware-m
-git checkout eb8ff0db7d657b77abcd0262d5bf7f38eb1e1cdc
+git checkout $TFM_TAG
 source lib/ext/tf-m-tests/version.txt
+export TF_M_EXTRAS_GIT_COMMIT="$(cat config/config_base.cmake | grep TFM_EXTRAS_REPO_VERSION  | cut -d '"' -f 2,2)"
 popd
-git clone https://github.com/mcu-tools/tf-m-tests.git
+git clone https://github.com/TrustedFirmware-M/tf-m-tests.git
 pushd tf-m-tests
 git checkout $version
+popd
+git clone https://github.com/TrustedFirmware-M/tf-m-extras.git
+pushd tf-m-extras
+git checkout $TF_M_EXTRAS_GIT_COMMIT
 popd
 
 if [[ $GITHUB_ACTIONS == true ]]; then
@@ -54,7 +59,7 @@ if [[ $GITHUB_ACTIONS == true ]]; then
 fi
 
 if test -z "$FIH_LEVEL"; then
-    docker run --rm -v $(pwd):/root/work/tfm:rw,z mcuboot/fih-test:$FIH_IMAGE_VERSION /bin/sh -c '/root/work/tfm/mcuboot/ci/fih_test_docker/execute_test.sh $0 $1 $2' $SKIP_SIZE $BUILD_TYPE $DAMAGE_TYPE
+    docker run --rm -v $(pwd):/root/work/tfm:rw,z $CONTAINER_REGISTRY/$FIH_IMAGE /bin/sh -c '/root/work/tfm/mcuboot/ci/fih_test_docker/execute_test.sh $0 $1 $2' $SKIP_SIZE $BUILD_TYPE $DAMAGE_TYPE
 else
-    docker run --rm -v $(pwd):/root/work/tfm:rw,z mcuboot/fih-test:$FIH_IMAGE_VERSION /bin/sh -c '/root/work/tfm/mcuboot/ci/fih_test_docker/execute_test.sh $0 $1 $2 $3' $SKIP_SIZE $BUILD_TYPE $DAMAGE_TYPE $FIH_LEVEL
+    docker run --rm -v $(pwd):/root/work/tfm:rw,z $CONTAINER_REGISTRY/$FIH_IMAGE /bin/sh -c '/root/work/tfm/mcuboot/ci/fih_test_docker/execute_test.sh $0 $1 $2 $3' $SKIP_SIZE $BUILD_TYPE $DAMAGE_TYPE $FIH_LEVEL
 fi

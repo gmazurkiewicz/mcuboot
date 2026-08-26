@@ -1,0 +1,120 @@
+sample:
+  description: MCUboot test build sample
+  name: mcuboot
+common:
+  tags: bootloader_mcuboot
+  platform_allow:
+    - nrf52840dk/nrf52840
+  integration_platforms:
+    - nrf52840dk/nrf52840
+tests:
+  sample.bootloader.mcuboot:
+    platform_allow:
+      - frdm_k22f
+      - frdm_k64f
+      - frdm_k82f
+      - frdm_ke17z
+      - frdm_ke17z512
+      - frdm_mcxn947/mcxn947/cpu0
+      - lpcxpresso55s06
+      - lpcxpresso55s16
+      - lpcxpresso55s28
+      - lpcxpresso55s36
+      - lpcxpresso55s69/lpc55s69/cpu0
+      - mimxrt1010_evk
+      - mimxrt1015_evk
+      - mimxrt1020_evk
+      - mimxrt1024_evk
+      - mimxrt1040_evk
+      - mimxrt1050_evk/mimxrt1052/hyperflash
+      - mimxrt1060_evk/mimxrt1062/qspi
+      - mimxrt1062_fmurt6
+      - mimxrt1064_evk
+      - mimxrt1160_evk/mimxrt1166/cm7
+      - mimxrt1170_evk/mimxrt1176/cm7
+      - mimxrt595_evk/mimxrt595s/cm33
+      - mimxrt685_evk/mimxrt685s/cm33
+      - rd_rw612_bga
+      - rddrone_fmuk66
+      - twr_ke18f
+      - twr_kv58f220m
+      - vmu_rt1170/mimxrt1176/cm7
+      - disco_l475_iot1
+    integration_platforms:
+      - frdm_k64f
+      - disco_l475_iot1
+  sample.bootloader.mcuboot.serial_recovery:
+    extra_args:
+      - EXTRA_CONF_FILE="serial_recovery.conf"
+  sample.bootloader.mcuboot.serial_recovery_raw:
+    extra_args:
+      - EXTRA_CONF_FILE="serial_recovery_raw.conf"
+  sample.bootloader.mcuboot.serial_recovery_all_options:
+    extra_args:
+      - EXTRA_CONF_FILE="serial_recovery.conf"
+    extra_configs:
+      - CONFIG_MCUBOOT_SERIAL=y
+      - CONFIG_ENABLE_MGMT_PERUSER=y
+      - CONFIG_BOOT_MGMT_CUSTOM_STORAGE_ERASE=y
+      - CONFIG_BOOT_MGMT_ECHO=y
+      - CONFIG_BOOT_MGMT_MCUMGR_PARAMS=y
+      - CONFIG_BOOT_SERIAL_IMG_GRP_IMAGE_STATE=y
+      - CONFIG_BOOT_SERIAL_IMG_GRP_SLOT_INFO=y
+  sample.bootloader.mcuboot.usb_cdc_acm_recovery:
+    platform_allow:
+      - nrf52840dongle/nrf52840
+    integration_platforms:
+      - nrf52840dongle/nrf52840
+    extra_args:
+      - EXTRA_CONF_FILE="usb_cdc_acm_recovery.conf"
+      - EXTRA_DTC_OVERLAY_FILE="usb_cdc_acm.overlay"
+      - FILE_SUFFIX="usb_cdc_acm"
+    extra_configs:
+      - CONFIG_DEPRECATION_TEST=y
+  sample.bootloader.mcuboot.usb_cdc_acm_recovery_log:
+    extra_args:
+      - EXTRA_CONF_FILE="usb_cdc_acm_log_recovery.conf"
+      - FILE_SUFFIX="big"
+    extra_configs:
+      - CONFIG_DEPRECATION_TEST=y
+  sample.bootloader.mcuboot.single_slot:
+    extra_args:
+      - EXTRA_CONF_FILE="single_slot.conf"
+      - FILE_SUFFIX="single_slot"
+  sample.bootloader.mcuboot.qspi_nor_slot:
+    extra_args:
+      - FILE_SUFFIX="qspi_nor"
+  sample.bootloader.mcuboot.hooks_multi:
+    extra_args:
+      - FILE_SUFFIX="ram_multi"
+      - EXTRA_CONF_FILE="hooks_sample.conf"
+      - TEST_BOOT_IMAGE_ACCESS_HOOKS=Y
+  sample.bootloader.mcuboot.ram_load:
+    extra_args:
+      - EXTRA_CONF_FILE="ram_load.conf"
+    platform_allow:
+      - mimxrt1020_evk
+    integration_platforms:
+      - mimxrt1020_evk
+  sample.bootloader.mcuboot.swap_move:
+    extra_args:
+      - EXTRA_CONF_FILE="swap_move.conf"
+  sample.bootloader.mcuboot.two_signing_keys:
+    extra_configs:
+      - CONFIG_BOOT_SIGNATURE_TYPE_ED25519=y
+      - CONFIG_BOOT_SIGNATURE_KEY_FILE="root-ed25519.pem,root-ed25519-2-pub.pem"
+  sample.bootloader.mcuboot.runtime_source.hooks:
+    extra_args:
+      - EXTRA_CONF_FILE="../../samples/runtime-source/zephyr/sample.conf"
+      - TEST_RUNTIME_SOURCE_HOOKS=y
+    tags: runtime_source
+    platform_allow: frdm_k64f
+    build_only: true
+  sample.bootloader.mcuboot.encryption:
+    extra_configs:
+      - CONFIG_BOOT_ENCRYPT_IMAGE=y
+    platform_allow:
+      - nrf52840dk/nrf52840
+    integration_platforms:
+      - nrf52840dk/nrf52840
+    tags: bootloader_mcuboot

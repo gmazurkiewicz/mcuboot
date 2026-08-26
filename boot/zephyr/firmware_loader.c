@@ -73,7 +73,7 @@ boot_image_validate_once(const struct flash_area *fa_p,
     int rc;
     FIH_DECLARE(fih_rc, FIH_FAILURE);
 
-    BOOT_LOG_DBG("boot_image_validate_once: flash area %p", fap_p);
+    BOOT_LOG_DBG("boot_image_validate_once: flash area %p", fa_p);
 
     memset(&state, 0, sizeof(struct boot_swap_state));
     rc = boot_read_swap_state(fa_p, &state);
@@ -115,7 +115,10 @@ static fih_ret validate_image_slot(int slot, struct boot_rsp *rsp)
     BOOT_LOG_DBG("validate_image_slot: slot %d", slot);
 
     rc = flash_area_open(slot, &_fa_p);
-    assert(rc == 0);
+    if (rc != 0) {
+        BOOT_LOG_DBG("Error opening flash area. rc = %d", rc);
+        FIH_RET(FIH_FAILURE);
+    }
 
     rc = boot_image_load_header(_fa_p, &_hdr);
     if (rc != 0) {

@@ -9,6 +9,13 @@
 #include "mcuboot_config/mcuboot_config.h"
 
 #if defined(MCUBOOT_ENC_IMAGES)
+
+/* When MCUBOOT_USE_CUSTOM_CRYPTO is active the custom crypto translation unit
+ * provides all boot_enc_* and boot_decrypt_key symbols and handles HMAC/KDF
+ * internally without depending on MBED_TLS or TINYCRYPT.  Suppress this
+ * entire file to avoid duplicate symbol link errors. */
+#if !defined(MCUBOOT_USE_CUSTOM_CRYPTO)
+
 #include <stddef.h>
 #include <inttypes.h>
 #include <string.h>
@@ -22,11 +29,11 @@
 #include "bootutil/crypto/aes_kw.h"
 #endif
 
+#if !defined(MCUBOOT_USE_PSA_CRYPTO)
 #if defined(MCUBOOT_ENCRYPT_EC256)
 #include "bootutil/crypto/ecdh_p256.h"
 #endif
 
-#if !defined(MCUBOOT_USE_PSA_CRYPTO)
 #if defined(MCUBOOT_ENCRYPT_X25519)
 #include "bootutil/crypto/ecdh_x25519.h"
 #endif
@@ -50,7 +57,7 @@ BOOT_LOG_MODULE_DECLARE(mcuboot);
 #include "bootutil_priv.h"
 
 /* NOUP Fixme:  */
-#if !defined(CONFIG_BOOT_ED25519_PSA)
+#if !defined(CONFIG_BOOT_ED25519_PSA) && !defined(CONFIG_BOOT_ECDSA_PSA)
 #if defined(MCUBOOT_ENCRYPT_EC256) || defined(MCUBOOT_ENCRYPT_X25519)
 #if defined(_compare)
 static inline int bootutil_constant_time_compare(const uint8_t *a, const uint8_t *b, size_t size)
@@ -105,65 +112,64 @@ static const uint8_t ec_secp256r1_oid[] = MBEDTLS_OID_EC_GRP_SECP256R1;
  * curve keypair. See RFC5208 and RFC5915.
  */
 static int
-parse_ec256_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
+parse_priv_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
 {
-    int rc;
     size_t len;
     int version;
     mbedtls_asn1_buf alg;
     mbedtls_asn1_buf param;
 
-    if ((rc = mbedtls_asn1_get_tag(p, end, &len,
-                    MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
+    if (mbedtls_asn1_get_tag(p, end, &len,
+                             MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
         return -1;
     }
 
     if (*p + len != end) {
-        return -2;
+        return -1;
     }
 
     version = 0;
     if (mbedtls_asn1_get_int(p, end, &version) || version != 0) {
-        return -3;
+        return -1;
     }
 
-    if ((rc = mbedtls_asn1_get_alg(p, end, &alg, &param)) != 0) {
-        return -5;
+    if (mbedtls_asn1_get_alg(p, end, &alg, &param) != 0) {
+        return -1;
     }
 
     if (alg.ASN1_CONTEXT_MEMBER(len) != sizeof(ec_pubkey_oid) - 1 ||
         memcmp(alg.ASN1_CONTEXT_MEMBER(p), ec_pubkey_oid, sizeof(ec_pubkey_oid) - 1)) {
-        return -6;
+        return -1;
     }
     if (param.ASN1_CONTEXT_MEMBER(len) != sizeof(ec_secp256r1_oid) - 1 ||
         memcmp(param.ASN1_CONTEXT_MEMBER(p), ec_secp256r1_oid, sizeof(ec_secp256r1_oid) - 1)) {
-        return -7;
+        return -1;
     }
 
-    if ((rc = mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING)) != 0) {
-        return -8;
+    if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
+        return -1;
     }
 
     /* RFC5915 - ECPrivateKey */
 
-    if ((rc = mbedtls_asn1_get_tag(p, end, &len,
-                    MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE)) != 0) {
-        return -9;
+    if (mbedtls_asn1_get_tag(p, end, &len,
+                             MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        return -1;
     }
 
     version = 0;
     if (mbedtls_asn1_get_int(p, end, &version) || version != 1) {
-        return -10;
+        return -1;
     }
 
     /* privateKey */
 
-    if ((rc = mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING)) != 0) {
-        return -11;
+    if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
+        return -1;
     }
 
     if (len != NUM_ECC_BYTES) {
-        return -12;
+        return -1;
     }
 
     memcpy(private_key, *p, len);
@@ -180,7 +186,7 @@ static const uint8_t ec_pubkey_oid[] = MBEDTLS_OID_ISO_IDENTIFIED_ORG \
                                        MBEDTLS_OID_ORG_GOV X25519_OID;
 
 static int
-parse_x25519_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
+parse_priv_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
 {
     size_t len;
     int version;
@@ -193,33 +199,33 @@ parse_x25519_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
     }
 
     if (*p + len != end) {
-        return -2;
+        return -1;
     }
 
     version = 0;
     if (mbedtls_asn1_get_int(p, end, &version) || version != 0) {
-        return -3;
+        return -1;
     }
 
     if (mbedtls_asn1_get_alg(p, end, &alg, &param) != 0) {
-        return -4;
+        return -1;
     }
 
     if (alg.ASN1_CONTEXT_MEMBER(len) != sizeof(ec_pubkey_oid) - 1 ||
         memcmp(alg.ASN1_CONTEXT_MEMBER(p), ec_pubkey_oid, sizeof(ec_pubkey_oid) - 1)) {
-        return -5;
+        return -1;
     }
 
     if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
-        return -6;
+        return -1;
     }
 
     if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
-        return -7;
+        return -1;
     }
 
     if (len != EC_PRIVK_LEN) {
-        return -8;
+        return -1;
     }
 
     memcpy(private_key, *p, EC_PRIVK_LEN);
@@ -444,8 +450,9 @@ boot_decrypt_key(const uint8_t *buf, uint8_t *enckey)
      * Load the stored EC256 decryption private key
      */
 
-    rc = parse_ec256_enckey(&cp, cpend, private_key);
+    rc = parse_priv_enckey(&cp, cpend, private_key);
     if (rc) {
+        BOOT_LOG_ERR("Failed to parse ASN1 private key");
         return rc;
     }
 
@@ -467,8 +474,9 @@ boot_decrypt_key(const uint8_t *buf, uint8_t *enckey)
      * Load the stored X25519 decryption private key
      */
 
-    rc = parse_x25519_enckey(&cp, cpend, private_key);
+    rc = parse_priv_enckey(&cp, cpend, private_key);
     if (rc) {
+        BOOT_LOG_ERR("Failed to parse ASN1 private key");
         return rc;
     }
 
@@ -562,7 +570,7 @@ boot_decrypt_key(const uint8_t *buf, uint8_t *enckey)
 
     return rc;
 }
-#endif /* CONFIG_BOOT_ED25519_PSA */
+#endif /* CONFIG_BOOT_ED25519_PSA  && CONFIG_BOOT_ECDSA_PSA */
 
 /*
  * Load encryption key.
@@ -572,7 +580,7 @@ boot_enc_load(struct boot_loader_state *state, int slot,
               const struct image_header *hdr, const struct flash_area *fap,
               struct boot_status *bs)
 {
-    struct enc_key_data *enc_state = BOOT_CURR_ENC(state);
+    struct enc_key_data *enc_state = BOOT_CURR_ENC_SLOT(state, slot);
     uint32_t off;
     uint16_t len;
     struct image_tlv_iter it;
@@ -586,13 +594,13 @@ boot_enc_load(struct boot_loader_state *state, int slot,
     BOOT_LOG_DBG("boot_enc_load: slot %d", slot);
 
     /* Already loaded... */
-    if (enc_state[slot].valid) {
+    if (boot_enc_valid(enc_state)) {
         BOOT_LOG_DBG("boot_enc_load: already loaded");
         return 1;
     }
 
     /* Initialize the AES context */
-    boot_enc_init(enc_state, slot);
+    boot_enc_init(enc_state);
 
 #if defined(MCUBOOT_SWAP_USING_OFFSET)
     it.start_off = boot_get_state_secondary_offset(state, fap);
@@ -626,48 +634,46 @@ boot_enc_load(struct boot_loader_state *state, int slot,
 }
 
 int
-boot_enc_init(struct enc_key_data *enc_state, uint8_t slot)
+boot_enc_init(struct enc_key_data *enc_state)
 {
-    bootutil_aes_ctr_init(&enc_state[slot].aes_ctr);
+    bootutil_aes_ctr_init(&enc_state->aes_ctr);
     return 0;
 }
 
 int
-boot_enc_drop(struct enc_key_data *enc_state, uint8_t slot)
+boot_enc_drop(struct enc_key_data *enc_state)
 {
-    bootutil_aes_ctr_drop(&enc_state[slot].aes_ctr);
-    enc_state[slot].valid = 0;
+    bootutil_aes_ctr_drop(&enc_state->aes_ctr);
+    enc_state->valid = 0;
     return 0;
 }
 
 int
-boot_enc_set_key(struct enc_key_data *enc_state, uint8_t slot,
-        const struct boot_status *bs)
+boot_enc_set_key(struct enc_key_data *enc_state, const uint8_t *key)
 {
     int rc;
 
-    rc = bootutil_aes_ctr_set_key(&enc_state[slot].aes_ctr, bs->enckey[slot]);
+    rc = bootutil_aes_ctr_set_key(&enc_state->aes_ctr, key);
     if (rc != 0) {
-        boot_enc_drop(enc_state, slot);
+        boot_enc_drop(enc_state);
         return -1;
     }
 
-    enc_state[slot].valid = 1;
+    enc_state->valid = 1;
 
     return 0;
 }
 
 bool
-boot_enc_valid(struct enc_key_data *enc_state, int slot)
+boot_enc_valid(const struct enc_key_data *enc_state)
 {
-    return enc_state[slot].valid;
+    return enc_state->valid;
 }
 
 void
-boot_enc_encrypt(struct enc_key_data *enc_state, int slot, uint32_t off,
+boot_enc_encrypt(struct enc_key_data *enc, uint32_t off,
              uint32_t sz, uint32_t blk_off, uint8_t *buf)
 {
-    struct enc_key_data *enc = &enc_state[slot];
     uint8_t nonce[16];
 
     /* Nothing to do with size == 0 */
@@ -687,10 +693,9 @@ boot_enc_encrypt(struct enc_key_data *enc_state, int slot, uint32_t off,
 }
 
 void
-boot_enc_decrypt(struct enc_key_data *enc_state, int slot, uint32_t off,
+boot_enc_decrypt(struct enc_key_data *enc, uint32_t off,
              uint32_t sz, uint32_t blk_off, uint8_t *buf)
 {
-    struct enc_key_data *enc = &enc_state[slot];
     uint8_t nonce[16];
 
     /* Nothing to do with size == 0 */
@@ -717,9 +722,11 @@ boot_enc_zeroize(struct enc_key_data *enc_state)
 {
     uint8_t slot;
     for (slot = 0; slot < BOOT_NUM_SLOTS; slot++) {
-        (void)boot_enc_drop(enc_state, slot);
+        (void)boot_enc_drop(&enc_state[slot]);
     }
     memset(enc_state, 0, sizeof(struct enc_key_data) * BOOT_NUM_SLOTS);
 }
+
+#endif /* !MCUBOOT_USE_CUSTOM_CRYPTO */
 
 #endif /* MCUBOOT_ENC_IMAGES */

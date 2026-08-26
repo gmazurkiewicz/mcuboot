@@ -49,7 +49,7 @@ macro_rules! sim_test {
     };
 }
 
-sim_test!(bad_secondary_slot, make_bad_secondary_slot_image(), run_signfail_upgrade());
+sim_test!(bad_secondary_slot, make_bad_secondary_slot_image(ImageManipulation::BadSignature), run_signfail_upgrade());
 sim_test!(secondary_trailer_leftover, make_erased_secondary_image(), run_secondary_leftover_trailer());
 sim_test!(bootstrap, make_bootstrap_image(), run_bootstrap());
 sim_test!(oversized_bootstrap, make_oversized_bootstrap_image(), run_oversized_bootstrap());
@@ -59,22 +59,109 @@ sim_test!(revert_with_fails, make_image(&NO_DEPS, false), run_revert_with_fails(
 sim_test!(perm_with_fails, make_image(&NO_DEPS, true), run_perm_with_fails());
 sim_test!(perm_with_random_fails, make_image(&NO_DEPS, true), run_perm_with_random_fails(5));
 sim_test!(norevert, make_image(&NO_DEPS, true), run_norevert());
-sim_test!(oversized_secondary_slot, make_oversized_secondary_slot_image(), run_oversizefail_upgrade());
+sim_test!(oversized_secondary_slot, make_oversized_secondary_slot_image(), run_fail_upgrade_primary_intact());
+#[cfg(feature = "check-load-addr")]
+sim_test!(wrong_load_addr, make_bad_secondary_slot_image(ImageManipulation::WrongOffset), run_fail_upgrade_primary_intact());
 
 sim_test!(status_write_fails_complete, make_image(&NO_DEPS, true), run_with_status_fails_complete());
 sim_test!(status_write_fails_with_reset, make_image(&NO_DEPS, true), run_with_status_fails_with_reset());
 sim_test!(downgrade_prevention, make_image(&REV_DEPS, true), run_nodowngrade());
 
 sim_test!(direct_xip_first, make_no_upgrade_image(&NO_DEPS, ImageManipulation::None), run_direct_xip());
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_first, make_no_upgrade_image(&NO_DEPS, ImageManipulation::None), run_ram_load());
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_split, make_no_upgrade_image(&NO_DEPS, ImageManipulation::None), run_split_ram_load());
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_from_flash, make_no_upgrade_image(&NO_DEPS, ImageManipulation::None), run_ram_load_from_flash());
-sim_test!(hw_prot_failed_security_cnt_check, make_image_with_security_counter(Some(0)), run_hw_rollback_prot());
-sim_test!(hw_prot_missing_security_cnt, make_image_with_security_counter(None), run_hw_rollback_prot());
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_out_of_bounds, make_no_upgrade_image(&NO_DEPS, ImageManipulation::WrongOffset), run_ram_load_boot_with_result(false));
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_missing_header_flag, make_no_upgrade_image(&NO_DEPS, ImageManipulation::IgnoreRamLoadFlag), run_ram_load_boot_with_result(false));
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_failed_validation, make_no_upgrade_image(&NO_DEPS, ImageManipulation::BadSignature), run_ram_load_boot_with_result(false));
+#[cfg(not(feature = "check-load-addr"))]
 sim_test!(ram_load_corrupt_higher_version_image, make_no_upgrade_image(&NO_DEPS, ImageManipulation::CorruptHigherVersionImage), run_ram_load_boot_with_result(true));
+
+sim_test!(hw_prot_missing_security_cnt, make_image_with_security_counter(None), run_hw_rollback_prot());
+sim_test!(hw_prot_failed_security_cnt_check, make_image_with_security_counter(Some(0)), run_hw_rollback_prot());
+
+// Devices whose erase pages don't line up with the configured logical
+// sector size are excluded from `each_device`, and instead must be
+// rejected by the bootloader's logical sector verification: the boot
+// fails and the staged, otherwise-valid upgrade is left unapplied.
+// This is the only coverage MCUBOOT_VERIFY_LOGICAL_SECTORS gets, since
+// on compatible devices it succeeds silently.
+#[cfg(feature = "logical-sectors")]
+#[test]
+fn logical_sectors_reject_incompatible_devices() {
+    testlog::setup();
+    ImagesBuilder::each_logical_sector_incompatible_device(|r| {
+        let image = r.make_no_upgrade_image(&NO_DEPS, ImageManipulation::None);
+        dump_image(&image, "logical_sectors_reject_incompatible_devices");
+        assert!(!image.run_incompatible_logical_sectors());
+    });
+}
+
+#[cfg(feature = "sig-ed25519")]
+mod multi_key {
+    //! Multi-signing-key matrix.
+    //!
+    //! These tests only run when the simulator was built with `sig-ed25519` —
+    //! `sig-second-key` alone is meaningless without a supported signature
+    //! type, and build.rs panics if the pairing is missing. The whole module
+    //! is dropped on incompatible feature combinations rather than silently
+    //! turning into a no-op.
+
+    use super::*;
+    use bootsim::tlv::SigningKey;
+
+    // With a single-key build, the image signed with the primary key must
+    // boot and upgrade normally. With a two-key build (sig-second-key on)
+    // this exercises the iteration-finds-first-match path in
+    // bootutil_find_key().
+    test_shell!(signed_primary_key_boots, r, {
+        let image = r.make_no_upgrade_image_with_key(
+            &NO_DEPS,
+            ImageManipulation::None,
+            SigningKey::Primary,
+        );
+        dump_image(&image, "signed_primary_key_boots");
+        assert!(!image.run_norevert_newimage());
+    });
+
+    // With `sig-second-key`, the bootloader embeds a second verification
+    // key; an image signed with that key must boot. Without the feature,
+    // this test is dropped (see cfg-gated module).
+    #[cfg(feature = "sig-second-key")]
+    test_shell!(signed_secondary_key_boots, r, {
+        let image = r.make_no_upgrade_image_with_key(
+            &NO_DEPS,
+            ImageManipulation::None,
+            SigningKey::Secondary,
+        );
+        dump_image(&image, "signed_secondary_key_boots");
+        assert!(!image.run_norevert_newimage());
+    });
+
+    // A third ("unknown") key must always be rejected, regardless of
+    // whether the bootloader was built single- or multi-key.
+    test_shell!(signed_unknown_key_rejected, r, {
+        let image = r.make_secondary_slot_image_with_key(SigningKey::Unknown);
+        dump_image(&image, "signed_unknown_key_rejected");
+        assert!(!image.run_signfail_upgrade());
+    });
+
+    // Regression guard: a single-key build must reject images signed with
+    // the secondary key (since it doesn't embed it). Only valid when
+    // sig-second-key is OFF.
+    #[cfg(not(feature = "sig-second-key"))]
+    test_shell!(single_key_build_rejects_secondary_key_image, r, {
+        let image = r.make_secondary_slot_image_with_key(SigningKey::Secondary);
+        dump_image(&image, "single_key_build_rejects_secondary_key_image");
+        assert!(!image.run_signfail_upgrade());
+    });
+}
 
 #[cfg(feature = "multiimage")]
 sim_test!(ram_load_overlapping_images_same_base, make_no_upgrade_image(&NO_DEPS, ImageManipulation::OverlapImages(true)), run_ram_load_boot_with_result(false));

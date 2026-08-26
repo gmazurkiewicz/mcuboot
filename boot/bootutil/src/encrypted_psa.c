@@ -6,6 +6,8 @@
 
 #include "mcuboot_config/mcuboot_config.h"
 
+#if defined(MCUBOOT_USE_PSA_CRYPTO)
+
 #include <stddef.h>
 #include <inttypes.h>
 #include <string.h>
@@ -14,8 +16,26 @@
 #define MBEDTLS_ASN1_PARSE_C
 
 #include "bootutil/crypto/sha.h"
+#include "mbedtls/build_info.h"
 #include "mbedtls/oid.h"
 #include "mbedtls/asn1.h"
+
+/*
+ * In Mbed TLS 4.x, MBEDTLS_OID_EC_ALG_UNRESTRICTED and
+ * MBEDTLS_OID_EC_GRP_SECP256R1 were moved from the public
+ * `mbedtls/oid.h` to the private `tf-psa-crypto/utilities/crypto_oid.h`.
+ * Rather than pull a private header, define the raw OID byte strings
+ * locally when the public macros are not available. Values are taken
+ * from X9.62 / SEC2:
+ *   id-ecPublicKey (1.2.840.10045.2.1)       → {0x2a,0x86,0x48,0xce,0x3d,0x02,0x01}
+ *   secp256r1      (1.2.840.10045.3.1.7)     → {0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07}
+ */
+#if !defined(MBEDTLS_OID_EC_ALG_UNRESTRICTED)
+#define MBEDTLS_OID_EC_ALG_UNRESTRICTED "\x2a\x86\x48\xce\x3d\x02\x01"
+#endif
+#if !defined(MBEDTLS_OID_EC_GRP_SECP256R1)
+#define MBEDTLS_OID_EC_GRP_SECP256R1    "\x2a\x86\x48\xce\x3d\x03\x01\x07"
+#endif
 
 #include "bootutil/image.h"
 #include "bootutil/enc_key.h"
@@ -25,7 +45,7 @@
 #include "bootutil_priv.h"
 #include "bootutil/bootutil_log.h"
 
-BOOT_LOG_MODULE_DECLARE(mcuboot_psa_enc);
+BOOT_LOG_MODULE_REGISTER(mcuboot_psa_enc);
 
 #if defined(MCUBOOT_HMAC_SHA512)
 #define PSA_HMAC_HKDF_SHA PSA_ALG_SHA_512
@@ -33,9 +53,18 @@ BOOT_LOG_MODULE_DECLARE(mcuboot_psa_enc);
 #define PSA_HMAC_HKDF_SHA PSA_ALG_SHA_256
 #endif
 
+#if defined(MCUBOOT_ENCRYPT_EC256)
+#define NUM_ECC_BYTES (256 / 8)
+static const uint8_t ec_pubkey_oid[] = MBEDTLS_OID_EC_ALG_UNRESTRICTED;
+static const uint8_t ec_secp256r1_oid[] = MBEDTLS_OID_EC_GRP_SECP256R1;
+#define ECC_FAMILY PSA_ECC_FAMILY_SECP_R1
+#endif /* defined(MCUBOOT_ENCRYPT_EC256) */
+#if defined(MCUBOOT_ENCRYPT_X25519)
 #define X25519_OID "\x6e"
 static const uint8_t ec_pubkey_oid[] = MBEDTLS_OID_ISO_IDENTIFIED_ORG \
                                        MBEDTLS_OID_ORG_GOV X25519_OID;
+#define ECC_FAMILY PSA_ECC_FAMILY_MONTGOMERY
+#endif /* defined(MCUBOOT_ENCRYPT_X25519) */
 
 /* Partitioning of HKDF derived material, from the exchange derived key */
 /* AES key encryption key */
@@ -43,13 +72,94 @@ static const uint8_t ec_pubkey_oid[] = MBEDTLS_OID_ISO_IDENTIFIED_ORG \
 #define HKDF_AES_KEY_SIZE   (BOOT_ENC_KEY_SIZE)
 /* MAC feed */
 #define HKDF_MAC_FEED_INDEX (HKDF_AES_KEY_INDEX + HKDF_AES_KEY_SIZE)
-#define HKDF_MAC_FEED_SIZE  (32)    /* This is SHA independent */
+#if !defined(MCUBOOT_HMAC_SHA512)
+#define HKDF_MAC_FEED_SIZE  (32)
+#else
+#define HKDF_MAC_FEED_SIZE  (64)
+#endif
 /* Total size */
 #define HKDF_SIZE           (HKDF_AES_KEY_SIZE + HKDF_MAC_FEED_SIZE)
 
+#if defined(MCUBOOT_ENCRYPT_EC256)
+/* Fixme: This duplicates code from encrypted.c and depends on mbedtls */
+
+/*
+ * Parses the output of `imgtool keygen`, which produces a PKCS#8 elliptic
+ * curve keypair. See RFC5208 and RFC5915.
+ */
+static int
+parse_priv_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
+{
+    size_t len;
+    int version;
+    mbedtls_asn1_buf alg;
+    mbedtls_asn1_buf param;
+
+    if (mbedtls_asn1_get_tag(p, end, &len,
+                             MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        return -1;
+    }
+
+    if (*p + len != end) {
+        return -1;
+    }
+
+    version = 0;
+    if (mbedtls_asn1_get_int(p, end, &version) || version != 0) {
+        return -1;
+    }
+
+    if (mbedtls_asn1_get_alg(p, end, &alg, &param) != 0) {
+        return -1;
+    }
+
+    if (alg.ASN1_CONTEXT_MEMBER(len) != sizeof(ec_pubkey_oid) - 1 ||
+        memcmp(alg.ASN1_CONTEXT_MEMBER(p), ec_pubkey_oid, sizeof(ec_pubkey_oid) - 1)) {
+        return -1;
+    }
+    if (param.ASN1_CONTEXT_MEMBER(len) != sizeof(ec_secp256r1_oid) - 1 ||
+        memcmp(param.ASN1_CONTEXT_MEMBER(p), ec_secp256r1_oid, sizeof(ec_secp256r1_oid) - 1)) {
+        return -1;
+    }
+
+    if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
+        return -1;
+    }
+
+    /* RFC5915 - ECPrivateKey */
+
+    if (mbedtls_asn1_get_tag(p, end, &len,
+                             MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE) != 0) {
+        return -1;
+    }
+
+    version = 0;
+    if (mbedtls_asn1_get_int(p, end, &version) || version != 1) {
+        return -1;
+    }
+
+    /* privateKey */
+
+    if (mbedtls_asn1_get_tag(p, end, &len, MBEDTLS_ASN1_OCTET_STRING) != 0) {
+        return -1;
+    }
+
+    if (len != NUM_ECC_BYTES) {
+        return -1;
+    }
+
+    memcpy(private_key, *p, len);
+
+    /* publicKey usually follows but is not parsed here */
+
+    return 0;
+}
+#endif /* defined(MCUBOOT_ENCRYPT_EC256) */
+
+#if defined(MCUBOOT_ENCRYPT_X25519)
 /* Fixme: This duplicates code from encrypted.c and depends on mbedtls */
 static int
-parse_x25519_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
+parse_priv_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
 {
     size_t len;
     int version;
@@ -94,17 +204,51 @@ parse_x25519_enckey(uint8_t **p, uint8_t *end, uint8_t *private_key)
     memcpy(private_key, *p, EC_PRIVK_LEN);
     return 0;
 }
+#endif /* defined(MCUBOOT_ENCRYPT_X25519) */
 
 void bootutil_aes_ctr_init(bootutil_aes_ctr_context *ctx)
 {
     psa_status_t psa_ret = psa_crypto_init();
 
-    (void)ctx;
-
     if (psa_ret != PSA_SUCCESS) {
         BOOT_LOG_ERR("AES init PSA crypto init failed %d", psa_ret);
         assert(0);
     }
+
+    ctx->key = PSA_KEY_ID_NULL;
+}
+
+void bootutil_aes_ctr_drop(bootutil_aes_ctr_context *ctx)
+{
+    psa_status_t psa_ret = psa_destroy_key(ctx->key);
+
+    if (psa_ret != PSA_SUCCESS) {
+        BOOT_LOG_WRN("aes_ctr_drop: destruction failed %d", psa_ret);
+        /* This should never happen. If we fail to destroy key this happens
+         * either because it is invalid key number or something is really
+         * wrong; either way we have no way to recover.
+         */
+        assert(0);
+    }
+
+    ctx->key = PSA_KEY_ID_NULL;
+}
+
+int bootutil_aes_ctr_set_key(bootutil_aes_ctr_context *ctx, const uint8_t *k)
+{
+    psa_status_t psa_ret = PSA_ERROR_BAD_STATE;
+    psa_key_attributes_t kattr = PSA_KEY_ATTRIBUTES_INIT;
+
+    psa_set_key_type(&kattr, PSA_KEY_TYPE_AES);
+    psa_set_key_usage_flags(&kattr, PSA_KEY_USAGE_DECRYPT | PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&kattr, PSA_ALG_CTR);
+
+    psa_ret = psa_import_key(&kattr, k, HKDF_AES_KEY_SIZE, &ctx->key);
+    if (psa_ret != PSA_SUCCESS) {
+        BOOT_LOG_ERR("aes_ctr_set_key; import failed %d", psa_ret);
+        return -1;
+    }
+    return 0;
 }
 
 #if defined(MCUBOOT_ENC_IMAGES)
@@ -149,14 +293,15 @@ boot_decrypt_key(const uint8_t *buf, uint8_t *enckey)
     }
 
     /*
-     * Load the stored X25519 decryption private key
+     * * Load the stored decryption private key
      */
-    rc = parse_x25519_enckey(&cp, cpend, private_key);
+    rc = parse_priv_enckey(&cp, cpend, private_key);
     if (rc) {
+        BOOT_LOG_ERR("Failed to parse ASN1 private key");
         return rc;
     }
 
-    psa_set_key_type(&kattr, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_MONTGOMERY));
+    psa_set_key_type(&kattr, PSA_KEY_TYPE_ECC_KEY_PAIR(ECC_FAMILY));
     psa_set_key_usage_flags(&kattr, PSA_KEY_USAGE_DERIVE);
     psa_set_key_algorithm(&kattr, PSA_ALG_ECDH);
 
@@ -204,7 +349,7 @@ boot_decrypt_key(const uint8_t *buf, uint8_t *enckey)
 
     /* Only info, no salt */
     psa_ret = psa_key_derivation_input_bytes(&key_do, PSA_KEY_DERIVATION_INPUT_INFO,
-                                             "MCUBoot_ECIES_v1", 16);
+                                             (const uint8_t *)"MCUBoot_ECIES_v1", 16);
     if (psa_ret != PSA_SUCCESS) {
         psa_cleanup_ret = psa_key_derivation_abort(&key_do);
         if (psa_cleanup_ret != PSA_SUCCESS) {
@@ -302,10 +447,12 @@ int bootutil_aes_ctr_encrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
 {
     int ret = 0;
     psa_status_t psa_ret = PSA_ERROR_BAD_STATE;
-    psa_key_attributes_t kattr = PSA_KEY_ATTRIBUTES_INIT;
-    psa_key_id_t kid;
+    const psa_key_id_t kid = ctx->key;
     psa_cipher_operation_t psa_op;
     size_t elen = 0;	/* Decrypted length */
+
+    /* PSA cipher API handles CTR block alignment internally. */
+    (void)blk_off;
 
     /* Fixme: calling psa_crypto_init multiple times is not a problem,
      * yet the code here is only present because there is not general
@@ -319,21 +466,6 @@ int bootutil_aes_ctr_encrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
 
     psa_op = psa_cipher_operation_init();
 
-    /* Fixme: Import should happen when key is decrypted, but due to lack
-     * of key destruction there is no way to destroy key stored by
-     * psa other way than here. */
-    psa_set_key_type(&kattr, PSA_KEY_TYPE_AES);
-    psa_set_key_usage_flags(&kattr, PSA_KEY_USAGE_ENCRYPT);
-    psa_set_key_algorithm(&kattr, PSA_ALG_CTR);
-
-    psa_ret = psa_import_key(&kattr, ctx->key, BOOT_ENC_KEY_SIZE, &kid);
-    psa_reset_key_attributes(&kattr);
-    if (psa_ret != PSA_SUCCESS) {
-        BOOT_LOG_ERR("AES enc import key failed %d", psa_ret);
-        ret = -1;
-        goto gone;
-    }
-
     /* This could be done with psa_cipher_decrypt one-shot operation, but
      * multi-part operation is used to avoid re-allocating input buffer
      * to account for IV in front of data.
@@ -342,7 +474,7 @@ int bootutil_aes_ctr_encrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
     if (psa_ret != PSA_SUCCESS) {
         BOOT_LOG_ERR("AES enc setup failed %d", psa_ret);
         ret = -1;
-        goto gone_with_key;
+        goto gone;
     }
 
     /* Fixme: hardcoded counter  size, but it is hardcoded everywhere */
@@ -366,13 +498,6 @@ gone_after_setup:
         BOOT_LOG_WRN("AES enc cipher abort failed %d", psa_ret);
         /* Intentionally not changing the ret */
     }
-gone_with_key:
-    /* Fixme: Should be removed once key is shared by id */
-    psa_ret = psa_destroy_key(kid);
-    if (psa_ret != PSA_SUCCESS) {
-        BOOT_LOG_WRN("AES enc destroy key failed %d", psa_ret);
-        /* Intentionally not changing the ret */
-    }
 gone:
     return ret;
 }
@@ -382,10 +507,12 @@ int bootutil_aes_ctr_decrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
 {
     int ret = 0;
     psa_status_t psa_ret = PSA_ERROR_BAD_STATE;
-    psa_key_attributes_t kattr = PSA_KEY_ATTRIBUTES_INIT;
-    psa_key_id_t kid;
+    const psa_key_id_t kid = ctx->key;
     psa_cipher_operation_t psa_op;
     size_t dlen = 0;	/* Decrypted length */
+
+    /* PSA cipher API handles CTR block alignment internally. */
+    (void)blk_off;
 
     /* Fixme: the init should already happen before calling the function, but
      * somehow it does not, for example when recovering in swap.
@@ -399,21 +526,6 @@ int bootutil_aes_ctr_decrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
 
     psa_op = psa_cipher_operation_init();
 
-    /* Fixme: Import should happen when key is decrypted, but due to lack
-     * of key destruction there is no way to destroy key stored by
-     * psa other way than here. */
-    psa_set_key_type(&kattr, PSA_KEY_TYPE_AES);
-    psa_set_key_usage_flags(&kattr, PSA_KEY_USAGE_DECRYPT);
-    psa_set_key_algorithm(&kattr, PSA_ALG_CTR);
-
-    psa_ret = psa_import_key(&kattr, ctx->key, BOOT_ENC_KEY_SIZE, &kid);
-    psa_reset_key_attributes(&kattr);
-    if (psa_ret != PSA_SUCCESS) {
-        BOOT_LOG_ERR("AES dec import key failed %d", psa_ret);
-        ret = -1;
-        goto gone;
-    }
-
     /* This could be done with psa_cipher_decrypt one-shot operation, but
      * multi-part operation is used to avoid re-allocating input buffer
      * to account for IV in front of data.
@@ -422,7 +534,7 @@ int bootutil_aes_ctr_decrypt(bootutil_aes_ctr_context *ctx, uint8_t *counter,
     if (psa_ret != PSA_SUCCESS) {
         BOOT_LOG_ERR("AES dec setup failed %d", psa_ret);
         ret = -1;
-        goto gone_with_key;
+        goto gone;
     }
 
     /* Fixme: hardcoded counter  size, but it is hardcoded everywhere */
@@ -446,13 +558,9 @@ gone_after_setup:
         BOOT_LOG_WRN("PSA dec abort failed %d", psa_ret);
         /* Intentionally not changing the ret */
     }
-gone_with_key:
-    psa_ret = psa_destroy_key(kid);
-    if (psa_ret != PSA_SUCCESS) {
-        BOOT_LOG_WRN("PSA dec key failed %d", psa_ret);
-        /* Intentionally not changing the ret */
-    }
 gone:
     return ret;
 }
 #endif /* defined(MCUBOOT_ENC_IMAGES) */
+
+#endif /* defined(MCUBOOT_USE_PSA_CRYPTO) */

@@ -43,8 +43,12 @@
 
 #elif defined(MCUBOOT_USE_MBED_TLS)
 
-#include "mbedtls/rsa.h"
-#include "mbedtls/version.h"
+#include "bootutil/crypto/common.h"
+#if MCUBOOT_MBEDTLS_CRYPTO_IN_PRIVATE_SUBDIR
+#include "mbedtls/private/rsa.h"
+#else
+#include <mbedtls/rsa.h>
+#endif
 #if defined(BOOTUTIL_CRYPTO_RSA_CRYPT_ENABLED)
 #if MBEDTLS_VERSION_NUMBER >= 0x03000000
 #include "rsa_alt_helpers.h"
@@ -53,7 +57,6 @@
 #endif
 #endif /* BOOTUTIL_CRYPTO_RSA_CRYPT_ENABLED */
 #include "mbedtls/asn1.h"
-#include "bootutil/crypto/common.h"
 
 #endif /* MCUBOOT_USE_MBED_TLS */
 
@@ -234,10 +237,18 @@ bootutil_rsa_parse_private_key(bootutil_rsa_context *ctx, uint8_t **p, uint8_t *
         return -2;
     }
 
+    int dummy;
+    int* version = &dummy;
+    /* version - "ver" field was removed from RSA structure starting from TF-PSA-Crypto. */
+#if !defined(TF_PSA_CRYPTO_VERSION_NUMBER)
+    version = &ctx->MBEDTLS_CONTEXT_MEMBER(ver);
+#endif /* !TF_PSA_CRYPTO_VERSION_NUMBER */
+    if (mbedtls_asn1_get_int(p, end, version) != 0) {
+        return -3;
+    }
+
     /* Non-optional fields. */
-    if ( /* version */
-        mbedtls_asn1_get_int(p, end, &ctx->MBEDTLS_CONTEXT_MEMBER(ver)) != 0 ||
-         /* public modulus */
+    if ( /* public modulus */
         mbedtls_asn1_get_mpi(p, end, &ctx->MBEDTLS_CONTEXT_MEMBER(N)) != 0 ||
          /* public exponent */
         mbedtls_asn1_get_mpi(p, end, &ctx->MBEDTLS_CONTEXT_MEMBER(E)) != 0 ||
@@ -316,15 +327,6 @@ bootutil_rsa_parse_public_key(bootutil_rsa_context *ctx, uint8_t **p, uint8_t *e
     if (*p != end) {
         return -4;
     }
-
-    /* The Mbed TLS version is more than 2.6.1 */
-#if MBEDTLS_VERSION_NUMBER > 0x02060100
-    rc = mbedtls_rsa_import(ctx, &ctx->MBEDTLS_CONTEXT_MEMBER(N), NULL,
-                            NULL, NULL, &ctx->MBEDTLS_CONTEXT_MEMBER(E));
-    if (rc != 0) {
-        return -5;
-    }
-#endif
 
     rc = mbedtls_rsa_check_pubkey(ctx);
     if (rc != 0) {

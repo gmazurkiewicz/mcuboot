@@ -12,8 +12,10 @@ sig-rsa3072 = ["mcuboot-sys/sig-rsa3072"]
 sig-ecdsa = ["mcuboot-sys/sig-ecdsa"]
 sig-ecdsa-mbedtls = ["mcuboot-sys/sig-ecdsa-mbedtls"]
 sig-ecdsa-psa = ["mcuboot-sys/sig-ecdsa-psa", "mcuboot-sys/psa-crypto-api"]
+mbedtls-v4 = ["mcuboot-sys/mbedtls-v4", "sig-ecdsa-psa"]
 sig-p384 = ["mcuboot-sys/sig-p384"]
 sig-ed25519 = ["mcuboot-sys/sig-ed25519"]
+sig-second-key = ["mcuboot-sys/sig-second-key"]
 overwrite-only = ["mcuboot-sys/overwrite-only"]
 swap-offset = ["mcuboot-sys/swap-offset"]
 swap-move = ["mcuboot-sys/swap-move"]
@@ -32,13 +34,20 @@ multiimage = ["mcuboot-sys/multiimage"]
 ram-load = ["mcuboot-sys/ram-load"]
 direct-xip = ["mcuboot-sys/direct-xip"]
 downgrade-prevention = ["mcuboot-sys/downgrade-prevention"]
+max-align-16 = ["mcuboot-sys/max-align-16"]
 max-align-32 = ["mcuboot-sys/max-align-32"]
 hw-rollback-protection = ["mcuboot-sys/hw-rollback-protection"]
+check-load-addr = ["mcuboot-sys/check-load-addr"]
+custom-crypto = ["mcuboot-sys/custom-crypto"]
+custom-enc-crypto = ["mcuboot-sys/custom-enc-crypto"]
+logical-sectors = ["mcuboot-sys/logical-sectors"]
+logical-sectors-4k = ["logical-sectors", "mcuboot-sys/logical-sectors-4k"]
+logical-sectors-128k = ["logical-sectors", "mcuboot-sys/logical-sectors-128k"]
 
 [dependencies]
 byteorder = "1.4"
 libc = "0.2"
-rand = { version = "0.8", features = ["small_rng"] }
+rand = { version = "0.9", features = ["small_rng"] }
 docopt = "1.1.0"
 serde = "1.0"
 serde_derive = "1.0"

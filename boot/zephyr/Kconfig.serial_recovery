@@ -9,8 +9,8 @@ menuconfig MCUBOOT_SERIAL
 	select REBOOT
 	select SERIAL
 	select UART_INTERRUPT_DRIVEN
-	select BASE64
-	select CRC
+	select BASE64 if !BOOT_SERIAL_RAW_PROTOCOL
+	select CRC if !BOOT_SERIAL_RAW_PROTOCOL
 	select ZCBOR
 	depends on !BOOT_FIRMWARE_LOADER
 	help
@@ -45,6 +45,41 @@ config BOOT_SERIAL_CDC_ACM
 	  the chosen, leaving console on CDC ACM.
 
 endchoice
+
+config BOOT_SERIAL_RAW_PROTOCOL
+	bool "Raw (SMP without framing and encoding) protocol"
+	help
+	  If y, SMP (MCUmgr) commands are exchanged over the serial port as raw SMP
+	  packets instead of using the SMP over console format. This drops the
+	  base64 encoding and the additional console-specific framing (packet
+	  start/continuation markers, length prefix and CRC), which reduces flash
+	  and RAM usage and increases transfer speed, at the cost of requiring a
+	  binary-capable serial link. Packet boundaries are derived from the
+	  length field of the SMP header. The SMP client must be configured
+	  to use a matching raw transport.
+
+config BOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+	bool "Raw protocol input expiration"
+	depends on BOOT_SERIAL_RAW_PROTOCOL
+	default y
+	help
+	  Discard a partially received raw SMP packet after a period without new
+	  data, so that a stalled or malformed transfer cannot permanently wedge
+	  serial recovery. Unlike the SMP over console format, the raw protocol has
+	  no CRC or framing to detect a truncated packet, so there is otherwise no
+	  way to resynchronise the input stream. This mirrors Zephyr's
+	  MCUMGR_TRANSPORT_RAW_UART_INPUT_TIMEOUT (zephyrproject-rtos/zephyr#101821)
+	  and is enabled by default because raw recovery is unsafe without it.
+
+config BOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT_MS
+	int "Raw protocol input expiration timeout (ms)"
+	depends on BOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+	default 3000
+	help
+	  Time in milliseconds without new data, after which a still-incomplete
+	  raw SMP packet is dropped and the receive buffer is reset to await a new
+	  command. The window restarts whenever more data arrives, so it measures
+	  inactivity rather than total transfer time.
 
 config MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD
 	bool "Allow to select image number for DFU"
@@ -90,12 +125,26 @@ config BOOT_LINE_BUFS
 
 config BOOT_SERIAL_MAX_RECEIVE_SIZE
 	int "Maximum command line length"
+	range BOOT_MAX_LINE_INPUT_LEN 65535
 	default 1024
 	help
-	  Maximum length of received commands via the serial port (this should
-	  be equal to the maximum line length, BOOT_MAX_LINE_INPUT_LEN times
-	  by the number of receive buffers, BOOT_LINE_BUFS to allow for
-	  optimal data transfer speeds).
+	  Maximum length of a received command: the largest decoded SMP frame
+	  that serial recovery reassembles from the received fragments, and the
+	  buf_size reported by the MCUmgr parameters command
+	  (BOOT_MGMT_MCUMGR_PARAMS). This is a decoded ceiling, not an encoded
+	  line-buffer product (BOOT_MAX_LINE_INPUT_LEN times BOOT_LINE_BUFS);
+	  larger values permit larger SMP frames at the cost of RAM. The lower
+	  bound keeps the buffer large enough to hold one fragment so that a
+	  misconfiguration fails here rather than silently dropping frames.
+
+config BOOT_SERIAL_UART_RX_BATCH_SIZE
+	int "UART RX batch read size"
+	default 512
+	range 1 1024
+	help
+	  Number of bytes read from the UART FIFO per uart_fifo_read() call
+	  in the serial recovery ISR. Larger values reduce per-call overhead
+	  at the cost of a slightly larger static buffer.
 
 config BOOT_ERASE_PROGRESSIVELY
 	bool "Erase flash progressively when receiving new firmware"
@@ -107,12 +156,23 @@ config BOOT_ERASE_PROGRESSIVELY
 	 times at the beginning of the DFU process.
 
 config BOOT_MGMT_ECHO
-	bool "Enable echo command"
+	bool "Echo command"
 	help
 	  if enabled, support for the mcumgr echo command is being added.
 
+config BOOT_MGMT_MCUMGR_PARAMS
+	bool "MCUmgr OS mgmt params command"
+	depends on BOOT_MAX_LINE_INPUT_LEN = 128
+	help
+	  If enabled, support for the mcumgr OS group "MCUmgr parameters" command (command ID 6)
+	  is added, mirroring the command provided by Zephyr's SMP server. It reports the SMP
+	  transport buffer size (BOOT_SERIAL_MAX_RECEIVE_SIZE) and buffer count so that SMP
+	  clients can negotiate optimal serial fragmentation. The parameters do not carry the
+	  transport line length, so this option requires BOOT_MAX_LINE_INPUT_LEN to remain at the
+	  standard 128-byte fragment size. buf_count will always be 1.
+
 menuconfig ENABLE_MGMT_PERUSER
-	bool "Enable system specific mcumgr commands"
+	bool "System specific mcumgr commands"
 	help
 	  The option enables processing of system specific mcumgr commands;
 	  system specific commands are within group MGMT_GROUP_ID_PERUSER (64)
@@ -123,7 +183,7 @@ menuconfig ENABLE_MGMT_PERUSER
 if ENABLE_MGMT_PERUSER
 
 config BOOT_MGMT_CUSTOM_STORAGE_ERASE
-	bool "Enable storage erase command"
+	bool "Storage erase command"
 	help
 	  The option enables mcumgr command that allows to erase storage
 	  partition.

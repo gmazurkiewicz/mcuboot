@@ -67,6 +67,18 @@ impl BootGoResult {
     }
 }
 
+/// The logical sector size compiled into MCUboot, or zero when the feature is
+/// disabled.  Must agree with the MCUBOOT_LOGICAL_SECTOR_SIZE that build.rs
+/// defines for the same features.
+pub const fn logical_sector_size() -> usize {
+    #[cfg(feature = "logical-sectors-4k")]
+    { return 4 * 1024; }
+    #[cfg(feature = "logical-sectors-128k")]
+    { return 128 * 1024; }
+    #[allow(unreachable_code)]
+    0
+}
+
 /// Invoke the bootloader on this flash device.
 pub fn boot_go(multiflash: &mut SimMultiFlash, areadesc: &AreaDesc,
                counter: Option<&mut i32>, image_index: Option<i32>,
@@ -145,6 +157,13 @@ pub fn boot_status_sz(align: u32) -> u32 {
     unsafe { raw::boot_status_sz(align) }
 }
 
+/// The size of the trailer written to the scratch area.  Only meaningful in
+/// swap-using-scratch builds; other configurations link against a stub in
+/// `csupport/run.c` that returns zero.
+pub fn boot_scratch_trailer_sz(align: u32) -> u32 {
+    unsafe { raw::boot_scratch_trailer_sz(align) }
+}
+
 pub fn boot_magic_sz() -> usize {
     unsafe { raw::boot_magic_sz() as usize }
 }
@@ -208,6 +227,7 @@ mod raw {
 
         pub fn boot_trailer_sz(min_write_sz: u32) -> u32;
         pub fn boot_status_sz(min_write_sz: u32) -> u32;
+        pub fn boot_scratch_trailer_sz(min_write_sz: u32) -> u32;
 
         pub fn boot_magic_sz() -> u32;
         pub fn boot_max_align() -> u32;

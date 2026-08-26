@@ -33,6 +33,12 @@ sig-p384 = []
 # Verify ED25519 signatures.
 sig-ed25519 = []
 
+# Embed a second signing-verification key into the bootloader. When this
+# feature is enabled the simulator's bootutil_keys[] exposes two keys and
+# images signed with either are accepted. Currently only meaningful with
+# `sig-ed25519` — support for other signature types can be added as needed.
+sig-second-key = []
+
 # Overwrite only upgrade
 overwrite-only = []
 
@@ -90,8 +96,18 @@ direct-xip = []
 # Check (in software) against version downgrades.
 downgrade-prevention = []
 
+# Support images with 16-byte maximum write alignment value.
+max-align-16 = []
+
 # Support images with 32-byte maximum write alignment value.
 max-align-32 = []
+
+# Use logical sectors.  Enable exactly one of the sized features; each
+# implies the `logical-sectors` umbrella that code can test against
+# without caring about the size.
+logical-sectors = []
+logical-sectors-4k = ["logical-sectors"]
+logical-sectors-128k = ["logical-sectors"]
 
 # Enable hardware rollback protection
 hw-rollback-protection = []
@@ -99,8 +115,34 @@ hw-rollback-protection = []
 # Enable the PSA Crypto APIs where supported for cryptography related operations.
 psa-crypto-api = []
 
+# Route the simulator build to ext/mbedtls-4.1.0 instead of the default
+# ext/mbedtls-3.6.0 (LTS). Only supported in combination with feature
+# paths that have been ported to the 4.x API surface; currently just
+# sig-ecdsa-psa.  Routing through 4.x currently requires the
+# sig-ecdsa-psa path, so encode that dependency here to fail fast on
+# an invalid feature combination (build.rs also enforces it).
+mbedtls-v4 = ["sig-ecdsa-psa", "psa-crypto-api"]
+
+# Test for ih_load_addr in upgrade/next boot slot
+check-load-addr = []
+
+# Verify ECDSA-P256 signatures via MCUBOOT_USE_CUSTOM_CRYPTO using portable
+# mbedTLS-backed stubs contained entirely in csupport/custom_crypto/.
+# No hardware-specific code is compiled or linked.
+# Supports encryption when combined with enc-ec256-mbedtls, enc-aes256-ec256,
+# or the convenience feature custom-enc-crypto.
+custom-crypto = []
+
+# ECIES-P256 image encryption via the MCUBOOT_USE_CUSTOM_CRYPTO path.
+# Implies custom-crypto.  Activates sim_custom_encrypted.c for boot_enc_*
+# symbols backed by the portable mbedTLS stubs in csupport/custom_crypto/.
+# Use instead of the enc-ec256-mbedtls + custom-crypto combination when
+# the intent is clearly a fully-custom-crypto build.
+custom-enc-crypto = ["custom-crypto"]
+
 [build-dependencies]
 cc = "1.0.25"
+cmake = "0.1"
 
 [dependencies]
 libc = "0.2"

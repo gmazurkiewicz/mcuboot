@@ -11,11 +11,13 @@
  * primitives to make it easier to swap out the used crypto library.
  *
  * At this point, the choices are: MCUBOOT_USE_MBED_TLS, MCUBOOT_USE_TINYCRYPT,
- * MCUBOOT_USE_PSA_CRYPTO, MCUBOOT_USE_CC310. Note that support for MCUBOOT_USE_PSA_CRYPTO
- * is still experimental and it might not support all the crypto abstractions
- * that MCUBOOT_USE_MBED_TLS supports. For this reason, it's allowed to have
- * both of them defined, and for crypto modules that support both abstractions,
- * the MCUBOOT_USE_PSA_CRYPTO will take precedence.
+ * MCUBOOT_USE_PSA_CRYPTO, MCUBOOT_USE_CC310, MCUBOOT_USE_CUSTOM_CRYPTO. Note
+ * that support for MCUBOOT_USE_PSA_CRYPTO is still experimental and it might
+ * not support all the crypto abstractions that MCUBOOT_USE_MBED_TLS supports.
+ * For this reason, it's allowed to have both of them defined, and for crypto
+ * modules that support both abstractions, the MCUBOOT_USE_PSA_CRYPTO will take
+ * precedence. MCUBOOT_USE_CUSTOM_CRYPTO delegates all operations to a
+ * platform-supplied <mcuboot_custom_crypto.h> resolved via the include path.
  */
 
 #ifndef __BOOTUTIL_CRYPTO_SHA_H_
@@ -28,10 +30,15 @@
 #define MCUBOOT_USE_PSA_OR_MBED_TLS
 #endif /* MCUBOOT_USE_PSA_CRYPTO || MCUBOOT_USE_MBED_TLS */
 
+#if defined(MCUBOOT_USE_CUSTOM_CRYPTO) && defined(MCUBOOT_USE_PSA_OR_MBED_TLS)
+    #error "MCUBOOT_USE_CUSTOM_CRYPTO is mutually exclusive with MCUBOOT_USE_PSA_CRYPTO and MCUBOOT_USE_MBED_TLS"
+#endif
+
 #if (defined(MCUBOOT_USE_PSA_OR_MBED_TLS) + \
      defined(MCUBOOT_USE_TINYCRYPT) + \
-     defined(MCUBOOT_USE_CC310)) != 1
-    #error "One crypto backend must be defined: either CC310/MBED_TLS/TINYCRYPT/PSA_CRYPTO"
+     defined(MCUBOOT_USE_CC310) + \
+     defined(MCUBOOT_USE_CUSTOM_CRYPTO)) != 1
+    #error "One crypto backend must be defined: either CC310/MBED_TLS/TINYCRYPT/PSA_CRYPTO/CUSTOM_CRYPTO"
 #endif
 
 #if defined(MCUBOOT_SHA512)
@@ -55,16 +62,23 @@
 
 #elif defined(MCUBOOT_USE_MBED_TLS)
 
+#include "bootutil/crypto/common.h"
+
+#if MCUBOOT_MBEDTLS_CRYPTO_IN_PRIVATE_SUBDIR
+#ifdef MCUBOOT_SHA512
+#include <mbedtls/private/sha512.h>
+#else
+#include <mbedtls/private/sha256.h>
+#endif
+#else
 #ifdef MCUBOOT_SHA512
 #include <mbedtls/sha512.h>
 #else
 #include <mbedtls/sha256.h>
 #endif
+#endif
 
 #include <mbedtls/version.h>
-#if MBEDTLS_VERSION_NUMBER >= 0x03000000
-#include <mbedtls/compat-2.x.h>
-#endif
 
 #endif /* MCUBOOT_USE_MBED_TLS */
 
@@ -144,10 +158,10 @@ static inline int bootutil_sha_init(bootutil_sha_context *ctx)
 
 #ifdef MCUBOOT_SHA512
     mbedtls_sha512_init(ctx);
-    ret = mbedtls_sha512_starts_ret(ctx, 0);
+    ret = mbedtls_sha512_starts(ctx, 0);
 #else
     mbedtls_sha256_init(ctx);
-    ret = mbedtls_sha256_starts_ret(ctx, 0);
+    ret = mbedtls_sha256_starts(ctx, 0);
 #endif
 
     return ret;
@@ -171,9 +185,9 @@ static inline int bootutil_sha_update(bootutil_sha_context *ctx,
     int ret;
 
 #ifdef MCUBOOT_SHA512
-    ret = mbedtls_sha512_update_ret(ctx, data, data_len);
+    ret = mbedtls_sha512_update(ctx, data, data_len);
 #else
-    ret = mbedtls_sha256_update_ret(ctx, data, data_len);
+    ret = mbedtls_sha256_update(ctx, data, data_len);
 #endif
 
     return ret;
@@ -185,9 +199,9 @@ static inline int bootutil_sha_finish(bootutil_sha_context *ctx,
     int ret;
 
 #ifdef MCUBOOT_SHA512
-    ret = mbedtls_sha512_finish_ret(ctx, output);
+    ret = mbedtls_sha512_finish(ctx, output);
 #else
-    ret = mbedtls_sha256_finish_ret(ctx, output);
+    ret = mbedtls_sha256_finish(ctx, output);
 #endif
 
     return ret;

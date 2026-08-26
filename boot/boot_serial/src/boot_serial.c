@@ -77,6 +77,12 @@
 
 BOOT_LOG_MODULE_DECLARE(mcuboot);
 
+#if !(defined(MCUBOOT_SINGLE_APPLICATION_SLOT) || \
+    defined(MCUBOOT_FIRMWARE_LOADER) ||           \
+    defined(MCUBOOT_SINGLE_APPLICATION_SLOT_RAM_LOAD))
+#define BOOT_IMAGE_HAS_STATUS_FIELDS
+#endif
+
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE ZCBOR_ARRAY_SIZE
 #endif
@@ -141,9 +147,6 @@ BOOT_LOG_MODULE_DECLARE(mcuboot);
 #define BASE64_ENCODE_SIZE(in_size) ((((((in_size) - 1) / 3) * 4) + 4) + 1)
 #define CRC16_INITIAL_CRC       0       /* what to seed crc16 with */
 
-#define ntohs(x) be16toh(x)
-#define htons(x) htobe16(x)
-
 #define base64_decode mbedtls_base64_decode
 #define base64_encode mbedtls_base64_encode
 #endif
@@ -158,7 +161,9 @@ BOOT_LOG_MODULE_DECLARE(mcuboot);
 #define BOOT_DIRECT_UPLOAD_SECONDARY_SLOT_ID_REMAINDER 0
 
 static char in_buf[MCUBOOT_SERIAL_MAX_RECEIVE_SIZE + 1];
+#ifndef MCUBOOT_SERIAL_RAW_PROTOCOL
 static char dec_buf[MCUBOOT_SERIAL_MAX_RECEIVE_SIZE + 1];
+#endif
 const struct boot_uart_funcs *boot_uf;
 static struct nmgr_hdr *bs_hdr;
 static bool bs_entry;
@@ -273,7 +278,7 @@ bs_list_img_ver(char *dst, int maxlen, struct image_version *ver)
                   (uint16_t)ver->iv_minor, ver->iv_revision);
 
    if (ver->iv_build_num != 0 && len > 0 && len < maxlen) {
-      snprintf(&dst[len], (maxlen - len), ".%u", ver->iv_build_num);
+      snprintf(&dst[len], (maxlen - len), ".%" PRIu32, ver->iv_build_num);
    }
 }
 #endif /* !MCUBOOT_USE_SNPRINTF */
@@ -325,7 +330,7 @@ bs_list(struct boot_loader_state *state, char *buf, int len)
             }
 
 #ifdef MCUBOOT_SWAP_USING_OFFSET
-            if (slot == BOOT_SECONDARY_SLOT && swap_status != BOOT_SWAP_TYPE_REVERT) {
+            if (slot == BOOT_SLOT_SECONDARY && swap_status != BOOT_SWAP_TYPE_REVERT) {
                 start_off = boot_img_sector_size(state, slot, 0);
                 state->secondary_offset[image_index] = start_off;
             }
@@ -395,25 +400,25 @@ bs_list(struct boot_loader_state *state, char *buf, int len)
 
 #ifdef MCUBOOT_SERIAL_IMG_GRP_IMAGE_STATE
             if (swap_status == BOOT_SWAP_TYPE_NONE) {
-                if (slot == BOOT_PRIMARY_SLOT) {
+                if (slot == BOOT_SLOT_PRIMARY) {
                     confirmed = true;
                     active = true;
                 }
             } else if (swap_status == BOOT_SWAP_TYPE_TEST) {
-                if (slot == BOOT_PRIMARY_SLOT) {
+                if (slot == BOOT_SLOT_PRIMARY) {
                     confirmed = true;
                 } else {
                     pending = true;
                 }
             } else if (swap_status == BOOT_SWAP_TYPE_PERM) {
-                if (slot == BOOT_PRIMARY_SLOT) {
+                if (slot == BOOT_SLOT_PRIMARY) {
                     confirmed = true;
                 } else {
                     pending = true;
                     permanent = true;
                 }
             } else if (swap_status == BOOT_SWAP_TYPE_REVERT) {
-                if (slot == BOOT_PRIMARY_SLOT) {
+                if (slot == BOOT_SLOT_PRIMARY) {
                     active = true;
                 } else {
                     confirmed = true;
@@ -545,7 +550,7 @@ bs_set(struct boot_loader_state *state, char *buf, int len)
                 }
 
 #ifdef MCUBOOT_SWAP_USING_OFFSET
-                if (slot == BOOT_SECONDARY_SLOT && swap_status != BOOT_SWAP_TYPE_REVERT) {
+                if (slot == BOOT_SLOT_SECONDARY && swap_status != BOOT_SWAP_TYPE_REVERT) {
                     start_off = boot_img_sector_size(state, slot, 0);
                     state->secondary_offset[image_index] = start_off;
                 }
@@ -654,7 +659,7 @@ bs_list_set(uint8_t op, char *buf, int len)
     bool area_opened = false;
 
     state = boot_get_loader_state();
-    boot_state_clear(state);
+    boot_state_init(state);
 
     rc = boot_open_all_flash_areas(state);
     if (rc != 0) {
@@ -690,6 +695,7 @@ out:
     if (area_opened) {
         boot_close_all_flash_areas(state);
     }
+    boot_state_clear(state);
 
     if (rc != 0) {
         bs_rc_rsp(rc);
@@ -771,17 +777,18 @@ bs_slot_info(uint8_t op, char *buf, int len)
                  * Check if we support uploading to this slot and if so, return the
                  * image ID
                  */
-#if defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
-                ok = zcbor_tstr_put_lit(cbor_state, "upload_image_id") &&
-                     zcbor_uint32_put(cbor_state, (image_index + 1));
-#elif defined(MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD)
+#if defined(MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD)
                 ok = zcbor_tstr_put_lit(cbor_state, "upload_image_id") &&
                      zcbor_uint32_put(cbor_state, (image_index * 2 + slot + 1));
 #else
+#if !defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
                 if (slot == 1) {
+#endif
                     ok = zcbor_tstr_put_lit(cbor_state, "upload_image_id") &&
-                         zcbor_uint32_put(cbor_state, (image_index * 2 + 1));
+                         zcbor_uint32_put(cbor_state, image_index);
+#if !defined(MCUBOOT_SINGLE_APPLICATION_SLOT)
                 }
+#endif
 #endif
 
                 flash_area_close(fap);
@@ -913,8 +920,10 @@ bs_upload(char *buf, int len)
                                          * erase has stopped to let us know whether erase
                                          * is needed to be able to write current chunk.
                                          */
+#ifdef BOOT_IMAGE_HAS_STATUS_FIELDS
     static struct flash_sector status_sector;
 #endif
+#endif /* MCUBOOT_ERASE_PROGRESSIVELY */
 #ifdef MCUBOOT_SWAP_USING_OFFSET
     static uint32_t start_off = 0;
 #endif
@@ -981,13 +990,8 @@ bs_upload(char *buf, int len)
          */
         const size_t area_size = flash_area_get_size(fap);
 
-#if defined(MCUBOOT_SWAP_USING_OFFSET) && defined(MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD)
-        uint32_t num_sectors = SWAP_USING_OFFSET_SECTOR_UPDATE_BEGIN;
-        struct flash_sector sector_data;
-#endif
-
         curr_off = 0;
-#ifdef MCUBOOT_ERASE_PROGRESSIVELY
+#if defined(MCUBOOT_ERASE_PROGRESSIVELY) && defined(BOOT_IMAGE_HAS_STATUS_FIELDS)
         /* Get trailer sector information; this is done early because inability to get
          * that sector information means that upload will not work anyway.
          * TODO: This is single occurrence issue, it should get detected during tests
@@ -1031,7 +1035,17 @@ bs_upload(char *buf, int len)
 #if defined(MCUBOOT_SWAP_USING_OFFSET) && defined(MCUBOOT_SERIAL_DIRECT_IMAGE_UPLOAD)
         if (img_num > 0 &&
             (img_num % BOOT_NUM_SLOTS) == BOOT_DIRECT_UPLOAD_SECONDARY_SLOT_ID_REMAINDER) {
-            rc = flash_area_sectors(fap, &num_sectors, &sector_data);
+#if defined(MCUBOOT_LOGICAL_SECTOR_SIZE) && MCUBOOT_LOGICAL_SECTOR_SIZE != 0
+            /* The swap algorithms position slots by logical sectors, so the image
+             * in the secondary slot starts one logical sector in; the physical
+             * sector reported by the flash driver may be smaller.
+             */
+            start_off = MCUBOOT_LOGICAL_SECTOR_SIZE;
+#else
+            uint32_t num_sectors = SWAP_USING_OFFSET_SECTOR_UPDATE_BEGIN;
+            struct flash_sector sector_data;
+
+            rc = flash_area_get_sectors(fap->fa_id, &num_sectors, &sector_data);
 
             if ((rc != 0 && rc != -ENOMEM) ||
                 num_sectors != SWAP_USING_OFFSET_SECTOR_UPDATE_BEGIN) {
@@ -1040,6 +1054,7 @@ bs_upload(char *buf, int len)
             }
 
             start_off = sector_data.fs_size;
+#endif
         } else {
             start_off = 0;
         }
@@ -1154,7 +1169,7 @@ bs_upload(char *buf, int len)
     if (rc == 0) {
         curr_off += img_chunk_len + rem_bytes;
         if (curr_off == img_size) {
-#ifdef MCUBOOT_ERASE_PROGRESSIVELY
+#if defined(MCUBOOT_ERASE_PROGRESSIVELY) && defined(BOOT_IMAGE_HAS_STATUS_FIELDS)
             /* Assure that sector for image trailer was erased. */
             /* Check whether it was erased during previous upload. */
             off_t start = flash_sector_get_off(&status_sector);
@@ -1255,6 +1270,35 @@ out:
 }
 #endif
 
+#ifdef MCUBOOT_BOOT_MGMT_MCUMGR_PARAMS
+/*
+ * Reports the SMP transport buffer parameters so that clients can negotiate
+ * optimal serial fragmentation, mirroring the mcumgr OS group "MCUmgr
+ * parameters" command provided by Zephyr's SMP server. The serial recovery
+ * reassembles one command at a time into a single buffer, hence a buffer
+ * count of 1. The line length is not reported; enabling this command requires
+ * BOOT_MAX_LINE_INPUT_LEN to remain at the standard 128-byte fragment size.
+ */
+static void
+bs_mcumgr_params(char *buf, int len)
+{
+    static const uint_fast32_t max_num = 2;
+    bool ok = zcbor_map_start_encode(cbor_state, max_num) &&
+              zcbor_tstr_put_lit_cast(cbor_state, "buf_size") &&
+              zcbor_uint32_put(cbor_state, MCUBOOT_SERIAL_MAX_RECEIVE_SIZE) &&
+              zcbor_tstr_put_lit_cast(cbor_state, "buf_count") &&
+              zcbor_uint32_put(cbor_state, 1) &&
+              zcbor_map_end_encode(cbor_state, max_num);
+
+    if (ok) {
+        boot_serial_output();
+    } else {
+        reset_cbor_state();
+        bs_rc_rsp(MGMT_ERR_ENOMEM);
+    }
+}
+#endif
+
 /*
  * Reset, and (presumably) boot to newly uploaded image. Flush console
  * before restarting.
@@ -1348,6 +1392,11 @@ boot_serial_input(char *buf, int len)
         case NMGR_ID_RESET:
             bs_reset(buf, len);
             break;
+#ifdef MCUBOOT_BOOT_MGMT_MCUMGR_PARAMS
+        case NMGR_ID_MCUMGR_PARAMS:
+            bs_mcumgr_params(buf, len);
+            break;
+#endif
         default:
             bs_rc_rsp(MGMT_ERR_ENOTSUP);
             break;
@@ -1368,13 +1417,16 @@ static void
 boot_serial_output(void)
 {
     char *data;
-    int len, out;
+    int len;
+#ifndef MCUBOOT_SERIAL_RAW_PROTOCOL
+    int out;
     uint16_t crc;
     uint16_t totlen;
     char pkt_cont[2] = { SHELL_NLIP_DATA_START1, SHELL_NLIP_DATA_START2 };
     char pkt_start[2] = { SHELL_NLIP_PKT_START1, SHELL_NLIP_PKT_START2 };
     char buf[BOOT_SERIAL_OUT_MAX + sizeof(*bs_hdr) + sizeof(crc) + sizeof(totlen)];
     char encoded_buf[BASE64_ENCODE_SIZE(sizeof(buf))];
+#endif
 
     data = bs_obuf;
     len = (uintptr_t)cbor_state->payload_mut - (uintptr_t)bs_obuf;
@@ -1384,6 +1436,10 @@ boot_serial_output(void)
     bs_hdr->nh_len = htons(len);
     bs_hdr->nh_group = htons(bs_hdr->nh_group);
 
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL
+    boot_uf->write((const char *)bs_hdr, sizeof(*bs_hdr));
+    boot_uf->write(data, len);
+#else
 #ifdef __ZEPHYR__
     crc =  crc16_itu_t(CRC16_INITIAL_CRC, (uint8_t *)bs_hdr, sizeof(*bs_hdr));
     crc =  crc16_itu_t(crc, data, len);
@@ -1435,33 +1491,40 @@ boot_serial_output(void)
 
         boot_uf->write("\n", 1);
     }
+#endif /* MCUBOOT_SERIAL_RAW_PROTOCOL */
 
     BOOT_LOG_DBG("TX");
 }
 
+#ifndef MCUBOOT_SERIAL_RAW_PROTOCOL
 /*
  * Returns 1 if full packet has been received.
  */
 static int
 boot_serial_in_dec(char *in, int inlen, char *out, int *out_off, int maxout)
 {
-    size_t rc;
+    int decoded_len;
     uint16_t crc;
     uint16_t len;
 
 #ifdef __ZEPHYR__
+    size_t rc;
     int err;
     err = base64_decode( &out[*out_off], maxout - *out_off, &rc, in, inlen - 2);
     if (err) {
         return -1;
     }
+    decoded_len = (int)rc;
 #elif __ESPRESSIF__
+    size_t rc;
     int err;
     err = base64_decode((unsigned char *)&out[*out_off], maxout - *out_off, &rc, (unsigned char *)in, inlen);
     if (err) {
         return -1;
     }
+    decoded_len = (int)rc;
 #else
+    int rc;
     if (*out_off + base64_decode_len(in) >= maxout) {
         return -1;
     }
@@ -1469,9 +1532,10 @@ boot_serial_in_dec(char *in, int inlen, char *out, int *out_off, int maxout)
     if (rc < 0) {
         return -1;
     }
+    decoded_len = rc;
 #endif
 
-    *out_off += rc;
+    *out_off += decoded_len;
     if (*out_off <= sizeof(uint16_t)) {
         return 0;
     }
@@ -1497,6 +1561,49 @@ boot_serial_in_dec(char *in, int inlen, char *out, int *out_off, int maxout)
 
     return 1;
 }
+#endif /* !MCUBOOT_SERIAL_RAW_PROTOCOL */
+
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL
+/* Dispatch every complete raw SMP packet at the front of "buf" (length from the
+ * SMP header, capacity "max_input") via boot_serial_input(), keeping any
+ * trailing bytes; returns the count of unconsumed bytes left in "buf".
+ */
+static int
+boot_serial_input_raw(char *buf, int len, int max_input)
+{
+    while (len >= (int)sizeof(struct nmgr_hdr)) {
+        const struct nmgr_hdr *hdr = (const struct nmgr_hdr *)buf;
+        const int pkt_len = (int)sizeof(*hdr) + ntohs(hdr->nh_len);
+
+        if ((hdr->nh_op != NMGR_OP_READ && hdr->nh_op != NMGR_OP_WRITE) ||
+            pkt_len > max_input) {
+            /*
+             * Not a valid request, or larger than the receive buffer. The raw
+             * stream has no framing to resynchronise on, so discard everything
+             * buffered and rely on the input timeout to recover.
+             */
+            return 0;
+        }
+
+        if (len < pkt_len) {
+            /* More fragments expected. */
+            break;
+        }
+
+        boot_serial_input(buf, pkt_len);
+
+        /* Preserve any bytes that belong to the following packet. */
+        if (len > pkt_len) {
+            memmove(buf, buf + pkt_len, (size_t)(len - pkt_len));
+            len -= pkt_len;
+        } else {
+            len = 0;
+        }
+    }
+
+    return len;
+}
+#endif /* MCUBOOT_SERIAL_RAW_PROTOCOL */
 
 /*
  * Task which waits reading console, expecting to get image over
@@ -1507,10 +1614,15 @@ boot_serial_read_console(const struct boot_uart_funcs *f,int timeout_in_ms)
 {
     int rc;
     int off;
+#ifndef MCUBOOT_SERIAL_RAW_PROTOCOL
     int dec_off = 0;
+#endif
     int full_line;
     int max_input;
     int elapsed_in_ms = 0;
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+    uint32_t raw_input_start = 0;
+#endif
 
 #ifndef MCUBOOT_SERIAL_WAIT_FOR_DFU
     bool allow_idle = true;
@@ -1527,7 +1639,15 @@ boot_serial_read_console(const struct boot_uart_funcs *f,int timeout_in_ms)
          * from serial console (if single-thread mode is used).
          */
 #ifndef MCUBOOT_SERIAL_WAIT_FOR_DFU
-        if (allow_idle == true) {
+        /*
+         * Stay out of CPU idle while a partial raw packet is buffered, so the
+         * input-expiration timeout below is enforced promptly.
+         */
+        if (allow_idle == true
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+            && off == 0
+#endif
+            ) {
             MCUBOOT_CPU_IDLE();
             allow_idle = false;
         }
@@ -1544,6 +1664,22 @@ boot_serial_read_console(const struct boot_uart_funcs *f,int timeout_in_ms)
             goto check_timeout;
         }
         off += rc;
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL
+        /*
+         * Raw protocol: bytes are accumulated until one or more full SMP
+         * packets have been received; a single read may carry several complete
+         * packets (or a packet plus the start of the next). Dispatch all
+         * complete packets and keep any trailing bytes for the next read.
+         */
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+        /*
+         * New data arrived; restart the inactivity window so the timeout below
+         * fires only after a partial packet has stalled, not mid-transfer.
+         */
+        raw_input_start = os_uptime_get_ms_32();
+#endif
+        off = boot_serial_input_raw(in_buf, off, max_input);
+#else
         if (!full_line) {
             if (off == max_input) {
                 /*
@@ -1567,7 +1703,15 @@ boot_serial_read_console(const struct boot_uart_funcs *f,int timeout_in_ms)
             boot_serial_input(&dec_buf[2], dec_off - 2);
         }
         off = 0;
+#endif /* MCUBOOT_SERIAL_RAW_PROTOCOL */
 check_timeout:
+#ifdef MCUBOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT
+        if (off > 0 && (os_uptime_get_ms_32() - raw_input_start) >=
+                       MCUBOOT_SERIAL_RAW_PROTOCOL_INPUT_TIMEOUT_MS) {
+            /* Stalled partial raw packet expired; discard it. */
+            off = 0;
+        }
+#endif
         /* Subtract elapsed time */
 #ifdef MCUBOOT_SERIAL_WAIT_FOR_DFU
         elapsed_in_ms = (k_uptime_get_32() - start);

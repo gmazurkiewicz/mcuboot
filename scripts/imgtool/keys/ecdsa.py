@@ -3,15 +3,17 @@ ECDSA key management
 """
 
 # SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
 import os.path
-import hashlib
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.hashes import SHA256, SHA384
 
-from .general import KeyClass
+from .general import KeyClass, PayloadSigner, override
 from .privatebytes import PrivateBytesMixin
 
 
@@ -27,7 +29,7 @@ class ECDSAPublicKey(KeyClass):
         self.key = key
 
     def _unsupported(self, name):
-        raise ECDSAUsageError("Operation {} requires private key".format(name))
+        raise ECDSAUsageError(f"Operation {name} requires private key")
 
     def _get_public(self):
         return self.key
@@ -182,7 +184,7 @@ class ECDSA256P1Public(ECDSAPublicKey):
                         signature_algorithm=ec.ECDSA(SHA256()))
 
 
-class ECDSA256P1(ECDSAPrivateKey, ECDSA256P1Public):
+class ECDSA256P1(ECDSAPrivateKey, ECDSA256P1Public, PayloadSigner):
     """
     Wrapper around an ECDSA (p256) private key.
     """
@@ -192,7 +194,7 @@ class ECDSA256P1(ECDSAPrivateKey, ECDSA256P1Public):
         self.pad_sig = False
 
     @staticmethod
-    def generate():
+    def generate() -> ECDSA256P1:
         pk = ec.generate_private_key(
                 ec.SECP256R1(),
                 backend=default_backend())
@@ -204,7 +206,8 @@ class ECDSA256P1(ECDSAPrivateKey, ECDSA256P1Public):
                 data=payload,
                 signature_algorithm=ec.ECDSA(SHA256()))
 
-    def sign(self, payload):
+    @override
+    def sign(self, payload: bytes) -> bytes:
         sig = self.raw_sign(payload)
         if self.pad_sig:
             # To make fixed length, pad with one or two zeros.
@@ -255,7 +258,7 @@ class ECDSA384P1Public(ECDSAPublicKey):
                         signature_algorithm=ec.ECDSA(SHA384()))
 
 
-class ECDSA384P1(ECDSAPrivateKey, ECDSA384P1Public):
+class ECDSA384P1(ECDSAPrivateKey, ECDSA384P1Public, PayloadSigner):
     """
     Wrapper around an ECDSA (p384) private key.
     """
@@ -267,7 +270,7 @@ class ECDSA384P1(ECDSAPrivateKey, ECDSA384P1Public):
         self.pad_sig = False
 
     @staticmethod
-    def generate():
+    def generate() -> ECDSA384P1:
         pk = ec.generate_private_key(
                 ec.SECP384R1(),
                 backend=default_backend())
@@ -279,7 +282,8 @@ class ECDSA384P1(ECDSAPrivateKey, ECDSA384P1Public):
                 data=payload,
                 signature_algorithm=ec.ECDSA(SHA384()))
 
-    def sign(self, payload):
+    @override
+    def sign(self, payload: bytes) -> bytes:
         sig = self.raw_sign(payload)
         if self.pad_sig:
             # To make fixed length, pad with one or two zeros.
