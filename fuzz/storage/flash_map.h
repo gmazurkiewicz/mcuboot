@@ -42,6 +42,7 @@ extern "C" {
  * and match the target offset specified in download script.
  */
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 /**
@@ -161,6 +162,22 @@ int flash_area_id_to_multi_image_slot(int image_index, int area_id);
 void flash_sim_init(void);
 uint8_t *flash_sim_get_mem(void);
 size_t flash_sim_get_size(void);
+
+/*
+ * Reset the simulated flash and give it a device geometry. Erase sectors of
+ * `sector_sz` bytes and a write block size of `align`, which is what
+ * flash_area_align() reports and therefore what MCUboot's trailer arithmetic
+ * has to work with. When `erase_required` is 0 the device behaves like RRAM or
+ * MRAM: no explicit erase is needed and a write may set bits back to 1.
+ * flash_sim_init() uses 4096/1/erase-required.
+ */
+void flash_sim_init_with_geometry(uint32_t sector_sz, uint32_t align, int erase_required);
+uint32_t flash_sim_get_sector_size(void);
+bool flash_area_erase_required(const struct flash_area *fa);
+
+/* Number of writes MCUboot issued that were not a multiple of the write block
+ * size; a real driver would have rejected them. Must stay 0. */
+unsigned long flash_sim_misaligned_ops(void);
 
 /*
  * Power-cut fault injection.

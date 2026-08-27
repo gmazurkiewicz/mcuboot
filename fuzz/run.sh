@@ -17,7 +17,9 @@ for target in \
     McuBootSuite.InvokeBootGo \
     McuBootSuite.InvokeBootUpgradeLifecycle \
     McuBootSuite.BootSurvivesPowerCutsDuringSwap \
-    McuBootSuite.BootNeverRunsUnauthenticatedImage
+    McuBootSuite.BootNeverRunsUnauthenticatedImage \
+    McuBootSuite.SwapSurvivesAnyFlashGeometry \
+    McuBootSuite.BootParsesArbitraryTlvArea
 do
     build/fuzz_test --fuzz_for="${FUZZ_FOR}" --fuzz="${target}"
 done

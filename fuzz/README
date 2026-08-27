@@ -20,4 +20,9 @@ dd if=/dev/urandom of=img.in bs=128 count=1
 dd if=/dev/urandom of=img2.in bs=128 count=1
 ../scripts/imgtool.py sign -S 131072 -H 64 --pad-header -v 5.0.0 -k ../root-rsa-2048.pem img2.in img2.out
 
+# img_protected[] in fuzz_test.cpp: carries a protected TLV section (the
+# security counter), which the other two images do not have.
+dd if=/dev/urandom of=img3.in bs=128 count=1
+../scripts/imgtool.py sign -S 131072 -H 64 --pad-header -v 6.1.2 -s 42 -k ../root-rsa-2048.pem img3.in img3.out
+
 ./bin2array.py img.out

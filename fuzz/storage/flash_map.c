@@ -28,6 +28,12 @@
 /* Global memory simulating flash */
 static uint8_t flash_mem[DEVICE_FLASH_SIZE];
 
+/* Device geometry; see flash_sim_init_with_geometry(). */
+static uint32_t sector_size = SECTOR_SIZE;
+static uint32_t write_align = 1;
+static int requires_erase = 1;
+static unsigned long misaligned_ops;
+
 /* Power-cut fault injection state; see flash_map.h. */
 static unsigned long op_count;
 static unsigned long cut_at;
@@ -150,16 +156,25 @@ int flash_area_write(const struct flash_area *fa, uint32_t off, const void *src,
     if (check_range(fa, off, len) != 0) return -1;
     const uint8_t *s = (const uint8_t *)src;
     uint8_t *d = &flash_mem[fa->fa_off + off];
-    /* Validation: cannot change bits from 0 to 1. */
-    for (uint32_t i = 0; i < len; ++i) {
-        if ((d[i] & s[i]) != s[i]) {
-            return -1;
+    /* A real driver would reject this outright; count it instead so the
+     * violation is reported as a test failure rather than cascading into
+     * unrelated swap failures. */
+    if ((off % write_align) != 0 || (len % write_align) != 0) {
+        ++misaligned_ops;
+    }
+    /* NOR flash can only clear bits; a part that needs no explicit erase can
+     * write any value over any other. */
+    if (requires_erase) {
+        for (uint32_t i = 0; i < len; ++i) {
+            if ((d[i] & s[i]) != s[i]) {
+                return -1;
+            }
         }
     }
     long cut = power_cut_prefix(len);
     uint32_t applied = (cut < 0) ? len : (uint32_t)cut;
     for (uint32_t i = 0; i < applied; ++i) {
-        d[i] &= s[i];
+        d[i] = requires_erase ? (uint8_t)(d[i] & s[i]) : s[i];
     }
     if (cut >= 0) {
         power_cut();
@@ -181,7 +196,7 @@ int flash_area_erase(const struct flash_area *fa, uint32_t off, uint32_t len)
 uint32_t flash_area_align(const struct flash_area *fa)
 {
     (void)fa;
-    return 1; /* alignment = 1 byte. Return SECTOR_SIZE for more realism. */
+    return write_align;
 }
 
 uint8_t flash_area_erased_val(const struct flash_area *fa)
@@ -195,11 +210,15 @@ int flash_area_get_sectors(int fa_id, uint32_t *count, struct flash_sector *sect
     if (!count || !sectors) return -1;
     const struct flash_area *fa = NULL;
     if (flash_area_open((uint8_t)fa_id, &fa) != 0) return -1;
-    uint32_t n = (fa->fa_size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    uint32_t n = (fa->fa_size + sector_size - 1) / sector_size;
+    /* *count is the caller's array capacity on entry. */
+    if (n > *count) {
+        return -1;
+    }
     *count = n;
     for (uint32_t i = 0; i < n; ++i) {
-        sectors[i].fs_off = i * SECTOR_SIZE;
-        sectors[i].fs_size = (i == n - 1) ? (fa->fa_size - i * SECTOR_SIZE) : SECTOR_SIZE;
+        sectors[i].fs_off = i * sector_size;
+        sectors[i].fs_size = (i == n - 1) ? (fa->fa_size - i * sector_size) : sector_size;
     }
     return 0;
 }
@@ -208,9 +227,9 @@ int flash_area_sector_from_off(uint32_t off, struct flash_sector *sector)
 {
     if (!sector) return -1;
     if (off >= DEVICE_FLASH_SIZE) return -1;
-    uint32_t idx = off / SECTOR_SIZE;
-    sector->fs_off = idx * SECTOR_SIZE;
-    sector->fs_size = SECTOR_SIZE;
+    uint32_t idx = off / sector_size;
+    sector->fs_off = idx * sector_size;
+    sector->fs_size = sector_size;
     return 0;
 }
 
@@ -218,9 +237,9 @@ int flash_area_get_sector(const struct flash_area *fa, uint32_t off, struct flas
 {
     if (!fa || !sector) return -1;
     if (off >= fa->fa_size) return -1;
-    uint32_t idx = off / SECTOR_SIZE;
-    sector->fs_off = idx * SECTOR_SIZE;
-    sector->fs_size = (idx == (fa->fa_size / SECTOR_SIZE)) ? (fa->fa_size - idx * SECTOR_SIZE) : SECTOR_SIZE;
+    uint32_t idx = off / sector_size;
+    sector->fs_off = idx * sector_size;
+    sector->fs_size = (idx == (fa->fa_size / sector_size)) ? (fa->fa_size - idx * sector_size) : sector_size;
     return 0;
 }
 
@@ -253,11 +272,36 @@ int flash_area_id_to_multi_image_slot(int image_index, int area_id)
 /* Initialization: set memory to erased value. Call this from test code. */
 void flash_sim_init(void)
 {
+    flash_sim_init_with_geometry(SECTOR_SIZE, 1, 1);
+}
+
+void flash_sim_init_with_geometry(uint32_t sector_sz, uint32_t align, int erase_required)
+{
     memset(flash_mem, ERASED_VAL, sizeof(flash_mem));
     op_count = 0;
     cut_at = 0;
     cut_partial = 0;
     cut_happened = 0;
+    misaligned_ops = 0;
+    sector_size = sector_sz ? sector_sz : SECTOR_SIZE;
+    write_align = align ? align : 1;
+    requires_erase = erase_required;
+}
+
+bool flash_area_erase_required(const struct flash_area *fa)
+{
+    (void)fa;
+    return requires_erase != 0;
+}
+
+uint32_t flash_sim_get_sector_size(void)
+{
+    return sector_size;
+}
+
+unsigned long flash_sim_misaligned_ops(void)
+{
+    return misaligned_ops;
 }
 
 /* Extra helper: return pointer to raw simulated memory (for debug/testing). */

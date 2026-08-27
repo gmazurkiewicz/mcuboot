@@ -30,6 +30,8 @@ run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootGo
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootUpgradeLifecycle
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootSurvivesPowerCutsDuringSwap
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootNeverRunsUnauthenticatedImage
+run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.SwapSurvivesAnyFlashGeometry
+run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootParsesArbitraryTlvArea
 
 llvm-profdata-19 merge -sparse "${PROFRAW_DIR}"/*.profraw -o "${BUILD_DIR}/fuzz.profdata"
 

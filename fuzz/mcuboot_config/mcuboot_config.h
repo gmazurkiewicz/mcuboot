@@ -131,6 +131,11 @@
  * See the flash APIs for more details. */
 #define MCUBOOT_USE_FLASH_AREA_GET_SECTORS
 
+/* The simulated device reports at runtime whether it needs an explicit erase,
+ * so both kinds of part are reachable from the same binary. */
+#define MCUBOOT_SUPPORT_DEV_WITH_ERASE
+#define MCUBOOT_SUPPORT_DEV_WITHOUT_ERASE
+
 /* Default maximum number of flash sectors per image slot; change
  * as desirable. */
 #define MCUBOOT_MAX_IMG_SECTORS 128
