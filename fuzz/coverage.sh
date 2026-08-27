@@ -24,8 +24,9 @@ run() {
     LLVM_PROFILE_FILE="${PROFRAW_DIR}/%m-%p.profraw" "${BUILD_DIR}/fuzz_test" "$@"
 }
 
-# SanitizerSuite aborts on purpose, which would discard its profile.
-run '--gtest_filter=-SanitizerSuite.*'
+# The deterministic tests carry a lot of the coverage; the --fuzz runs below
+# each exercise only one target.
+run
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootGo
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.InvokeBootUpgradeLifecycle
 run --fuzz_for="${FUZZ_FOR}" --fuzz=McuBootSuite.BootSurvivesPowerCutsDuringSwap
