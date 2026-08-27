@@ -12,10 +12,18 @@ if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # Applied before any add_subdirectory() so the code under test and every
-# dependency are instrumented identically. -fno-sanitize=null,alignment drops
-# the checks that false-positive on clang's SSE2 intrinsics (_mm_loadu_si128 in
-# emmintrin.h, reached via abseil's SwissTable), not on mcuboot code.
-add_compile_options(-fsanitize=address,undefined -fno-sanitize=null,alignment -fno-sanitize-recover=address,undefined)
+# dependency are instrumented identically.
+#
+# -UNDEBUG keeps assert() alive in the code under test, which is a primary
+# fuzzing oracle: mcuboot asserts its own internal invariants all over the swap
+# code. FuzzTest already puts -UNDEBUG in CMAKE_C_FLAGS, but CMake emits
+# CMAKE_C_FLAGS_<CONFIG> after it and RelWithDebInfo's -DNDEBUG would win;
+# these options are emitted last, so repeating it here is what makes it stick.
+add_compile_options(
+  -fsanitize=address,undefined
+  -fno-sanitize-recover=address,undefined
+  -fsanitize-ignorelist=${CMAKE_CURRENT_SOURCE_DIR}/sanitizer-ignorelist.txt
+  -UNDEBUG)
 add_link_options(-fsanitize=address,undefined)
 
 include(FetchContent)
@@ -28,11 +36,15 @@ set(FUZZTEST_FUZZING_MODE ON CACHE BOOL "Enable FuzzTest fuzzing mode")
 FetchContent_MakeAvailable(fuzztest)
 
 # Must come before the code under test is added, otherwise bootutil/mbedtls are
-# built without coverage instrumentation and the fuzzer runs blind.
+# built without coverage instrumentation and the fuzzer runs blind. Note that
+# FuzzTest already ran this macro on itself, so it and its own dependencies
+# (abseil, googletest, re2) are sancov-instrumented too and contribute most of
+# the counter map; only ~0.4% of it belongs to bootutil.
 fuzztest_setup_fuzzing_flags()
 
-# Source-based coverage for the code under test only; FuzzTest and its
-# dependencies are added above and stay uninstrumented. See coverage.sh.
+# Source-based coverage. Enabled only from here on, so the llvm-cov report
+# covers the code under test and the harness; FuzzTest and its dependencies
+# were added above and get no coverage mapping. See coverage.sh.
 option(FUZZ_COVERAGE "Emit clang source-based coverage data" OFF)
 if(FUZZ_COVERAGE)
   add_compile_options(-fprofile-instr-generate -fcoverage-mapping)

@@ -1,0 +1,16 @@
+# UBSan's null and alignment checks false-positive on clang's SSE2 intrinsics
+# (_mm_loadu_si128 and friends), which are inlined into this harness from
+# abseil's SwissTable. Excluding them here keeps both checks enabled for
+# mcuboot itself, which -fno-sanitize=null,alignment would not.
+
+[alignment]
+src:*/emmintrin.h
+src:*/xmmintrin.h
+src:*/tmmintrin.h
+src:*/smmintrin.h
+
+[null]
+src:*/emmintrin.h
+src:*/xmmintrin.h
+src:*/tmmintrin.h
+src:*/smmintrin.h
