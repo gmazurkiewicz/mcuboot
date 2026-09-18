@@ -485,6 +485,11 @@ swap_status_source(struct boot_loader_state *state)
     (void)state;
 #endif
 
+    memset(&state_primary_slot, 0, sizeof(struct boot_swap_state));
+#if MCUBOOT_SWAP_USING_SCRATCH
+    memset(&state_scratch, 0, sizeof(struct boot_swap_state));
+#endif
+
     image_index = BOOT_CURR_IMG(state);
     rc = boot_read_swap_state(state->imgs[image_index][BOOT_SLOT_PRIMARY].area,
                               &state_primary_slot);
@@ -589,16 +594,13 @@ boot_copy_sz(const struct boot_loader_state *state, int last_sector_idx,
  * @param state     Current bootloader's state.
  * @param copy_size Total number of bytes to swap.
  *
- * @return          Index of the last sector in the primary slot that needs
- *                  swapping, or -1 if copy_size does not fit in the slots.
+ * @return          Index of the last sector in the primary slot that needs swapping.
  */
 static int
 find_last_sector_idx(const struct boot_loader_state *state, uint32_t copy_size)
 {
     int last_sector_idx_primary;
     int last_sector_idx_secondary;
-    int num_sectors_primary;
-    int num_sectors_secondary;
     uint32_t primary_slot_size;
     uint32_t secondary_slot_size;
 
@@ -606,8 +608,6 @@ find_last_sector_idx(const struct boot_loader_state *state, uint32_t copy_size)
     secondary_slot_size = 0;
     last_sector_idx_primary = 0;
     last_sector_idx_secondary = 0;
-    num_sectors_primary = (int)boot_img_num_sectors(state, BOOT_SLOT_PRIMARY);
-    num_sectors_secondary = (int)boot_img_num_sectors(state, BOOT_SLOT_SECONDARY);
 
     /*
      * Knowing the size of the largest image between both slots, here we
@@ -616,16 +616,6 @@ find_last_sector_idx(const struct boot_loader_state *state, uint32_t copy_size)
      * slot's last sector is not really required after this check is finished.
      */
     while (1) {
-        /* copy_size can come from an image trailer, so it is not necessarily
-         * trustworthy; refuse to walk off the end of the sector tables.
-         */
-        if (last_sector_idx_primary >= num_sectors_primary ||
-            last_sector_idx_secondary >= num_sectors_secondary) {
-            BOOT_LOG_ERR("Swap size %u does not fit in the image slots",
-                         (unsigned)copy_size);
-            return -1;
-        }
-
         if ((primary_slot_size < copy_size) ||
             (primary_slot_size < secondary_slot_size)) {
            primary_slot_size += boot_img_sector_size(state,
@@ -881,6 +871,7 @@ boot_swap_sectors(int idx, uint32_t sz, struct boot_loader_state *state,
                         (BOOT_STATUS_STATE_COUNT - 1) * BOOT_WRITE_SZ(state));
             BOOT_STATUS_ASSERT(rc == 0);
 
+            memset(&swap_state, 0, sizeof(struct boot_swap_state));
             rc = boot_read_swap_state(fap_scratch, &swap_state);
             assert(rc == 0);
 
