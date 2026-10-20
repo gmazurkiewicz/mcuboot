@@ -1,0 +1,56 @@
+# ClusterFuzzLite project configuration for MCUboot
+# https://google.github.io/clusterfuzzlite/project-configuration/
+
+name: mcuboot
+homepage: https://github.com/mcu-tools/mcuboot
+language: c++
+primary_contact: "gmazurkiewicz@example.com"
+
+# Enable automatic GitHub issue filing for crashes
+auto_cc: ["gmazurkiewicz@example.com"]
+file_github_issue: true
+github_repo: mcu-tools/mcuboot
+
+# Fuzzing engines to use
+fuzzing_engines:
+  - libfuzzer
+
+# Sanitizers to use
+sanitizers:
+  - address
+  - undefined
+
+# Disable code coverage by default (can be enabled per-run)
+code_coverage: false
+
+# Build system configuration
+build_system: cmake
+
+# Source directory (relative to project root)
+source_dir: 
+
+# Fuzz targets configuration
+fuzz_targets:
+  - name: boot_go_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.InvokeBootGo"]
+    
+  - name: boot_upgrade_lifecycle_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.InvokeBootUpgradeLifecycle"]
+    
+  - name: power_cuts_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.BootSurvivesPowerCutsDuringSwap"]
+    
+  - name: never_runs_unauthenticated_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.BootNeverRunsUnauthenticatedImage"]
+    
+  - name: swap_geometry_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.SwapSurvivesAnyFlashGeometry"]
+    
+  - name: tlv_area_fuzzer
+    path: fuzz/build/fuzz_test
+    arguments: ["--fuzz=McuBootSuite.BootParsesArbitraryTlvArea"]
