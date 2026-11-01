@@ -8,6 +8,8 @@ RUN apt-get update && \
         cmake \
         clang-19 \
         g++ \
+        g++-multilib \
+        libclang-rt-19-dev \
         build-essential \
         ninja-build \
     && \

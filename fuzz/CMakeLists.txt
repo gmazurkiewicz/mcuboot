@@ -23,8 +23,11 @@ add_compile_options(
   -fsanitize=address,undefined
   -fno-sanitize-recover=address,undefined
   -fsanitize-ignorelist=${CMAKE_CURRENT_SOURCE_DIR}/sanitizer-ignorelist.txt
-  -UNDEBUG)
-add_link_options(-fsanitize=address,undefined)
+  -UNDEBUG
+  -m32)
+add_link_options(
+  -fsanitize=address,undefined
+  -m32)
 
 include(FetchContent)
 set(FUZZTEST_VERSION "20fad20ee3f393c836e0015523aae0bff8ce9693")
