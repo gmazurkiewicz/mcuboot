@@ -287,6 +287,21 @@ std::array<uint8_t, kTemplateSize> BuildCandidateImage(const CandidateMutation &
     return bytes;
 }
 
+CandidateMutation HeaderSizeMutation(uint16_t hdr_size)
+{
+    CandidateMutation mutation{};
+    mutation.hdr_size = hdr_size;
+    return mutation;
+}
+
+CandidateMutation ImageBoundsMutation()
+{
+    CandidateMutation mutation{};
+    mutation.img_size = 0xffffffff;
+    mutation.protect_tlv_size = 0xffff;
+    return mutation;
+}
+
 /* Ground truth for the invariant checks. Deliberately compares the produced
  * bytes rather than asking which fields were set: the fuzzer regularly writes
  * a field back to the value it already held (a 1-in-256 chance per byte-sized
@@ -378,7 +393,10 @@ FUZZ_TEST(McuBootSuite, InvokeBootUpgradeLifecycle)
         fuzztest::Arbitrary<bool>())
     .WithSeeds({{CandidateMutation{}, true, false},
                 {CandidateMutation{}, false, false},
-                {CandidateMutation{}, false, true}});
+                {CandidateMutation{}, false, true},
+                {HeaderSizeMutation(0), false, false},
+                {HeaderSizeMutation(0xffff), false, false},
+                {ImageBoundsMutation(), false, false}});
 
 /* --------------------------------------------------------------------------
  * Interrupted swaps.
